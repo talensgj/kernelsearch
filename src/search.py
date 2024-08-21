@@ -17,8 +17,8 @@ def evaluate_template(time,
                       template_model):
 
     phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
-
     bin_idx = np.searchsorted(template_time / period + 0.5, phase)  # Phase centered at 0.5
+    template_model = np.append(np.append(0, template_model), 0)
     flux = depth_scale*template_model[bin_idx] + 1
 
     return phase, flux
@@ -28,8 +28,7 @@ def search_period(time,
                   flux,
                   flux_err,
                   period,
-                  epoch_step,
-                  max_duration,
+                  time_step,
                   template_time,
                   template_models
                   ):
@@ -42,54 +41,32 @@ def search_period(time,
     best_midpoint = np.nan
     best_depth_scale = np.nan
 
-    phase = np.mod(time/period - 0.5, 1)
+    phase = np.mod(time/period, 1)
 
-    # Extend arrays by 1 duration.
-    mask = phase < max_duration/period
-    phase = np.append(phase, phase[mask] + 1)
-    flux = np.append(flux, flux[mask])
-    weights = np.append(weights, weights[mask])
+    counter = (period/time_step).astype('int')
+    bin_edges = np.linspace(0, 1, counter + 1)
+    bin_idx = np.searchsorted(bin_edges, phase)
+    a_bin = np.bincount(bin_idx, weights=weights, minlength=counter + 2)
+    b_bin = np.bincount(bin_idx, weights=weights*(flux - 1), minlength=counter + 2)
+    a_bin = a_bin[1:-1]
+    b_bin = b_bin[1:-1]
 
-    sort = np.argsort(phase)
-    phase = phase[sort]
-    flux = flux[sort]
-    weights = weights[sort]
+    # Extend arrays.
+    _, ncols = template_models.shape
+    a_bin = np.append(a_bin, a_bin[:ncols-1])
+    b_bin = np.append(b_bin, b_bin[:ncols-1])
+    bin_edges = np.append(bin_edges, bin_edges[1:ncols] + 1)
 
-    tmp_arr = weights*(flux - 1)
-
-    template_phase = template_time / period + 0.5
-    template_phase[0] = 0
-    template_phase[-1] = 1
     template_square = template_models**2
 
-    epoch_step = template_time[2] - template_time[1]
-    counter = np.ceil(period/epoch_step).astype('int')
-    midpoint_vals = np.linspace(-period/2 + max_duration/2, (period + max_duration)/2, counter)
-    for midpoint in midpoint_vals:
+    for i in range(counter):
 
-        loop_phase = np.copy(template_phase)
-        loop_phase[1:-1] = loop_phase[1:-1] + midpoint/period
-        if midpoint >= 0:  # TODO
-            loop_phase[0] = max_duration/period
-            loop_phase[-1] = 1 + max_duration/period
+        alpha_n = np.sum(template_models*b_bin[i:i+ncols], axis=1)
+        beta_n = np.sum(template_square*a_bin[i:i+ncols], axis=1)
 
-        # plt.plot(phase, flux - 1, 'k.')
-        # plt.axvline(loop_phase[0], c='C0')
-        # plt.axvline(loop_phase[-1], c='C0')
-        # plt.plot(loop_phase[1:-1], template_models[:,1:-1].T)
+        # plt.plot(alpha_n0, alpha_n)
+        # plt.plot(beta_n0, beta_n)
         # plt.show()
-        # plt.close()
-
-        bin_idx = np.searchsorted(loop_phase, phase)  # Phase centered at 0.5
-
-        _, ncols = template_models.shape
-        Abin = np.bincount(bin_idx, weights=weights, minlength=ncols + 2)
-        Bbin = np.bincount(bin_idx, weights=tmp_arr, minlength=ncols + 2)
-        Abin = Abin[1:-1]
-        Bbin = Bbin[1:-1]
-
-        alpha_n = np.sum(template_models*Bbin, axis=1)
-        beta_n = np.sum(template_square*Abin, axis=1)
 
         depth_scale_n = alpha_n/beta_n
         chi2_n = chi2_ref - alpha_n**2/beta_n
@@ -98,7 +75,7 @@ def search_period(time,
         if chi2_n[arg] < chi2:
             chi2 = chi2_n[arg]
             best_template = arg
-            best_midpoint = midpoint
+            best_midpoint = period*(bin_edges[i] + bin_edges[i+ncols + 1])/2
             best_depth_scale = depth_scale_n[arg]
 
     return chi2, best_template, best_midpoint, best_depth_scale
@@ -122,7 +99,20 @@ def template_grid(period,
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    counter = np.ceil(max_duration*(12*24)).astype('int')
+    # Initial time-step.
+    time_step = 1/(12*24)  # TODO determine from ingress/egress duration.
+
+    # Adjust the time-step so it is a multiple of the period.
+    factor = period / time_step
+    time_step = period / np.ceil(factor)
+
+    # Adjust the duration values so the max duration is a multiple of the time-step.
+    factor = max_duration / time_step
+    factor = time_step * np.ceil(factor) / max_duration
+    max_duration = factor * max_duration
+    min_duration = factor * min_duration
+
+    counter = (max_duration/time_step).astype('int')
     time_edges = np.linspace(-max_duration/2, max_duration/2, counter + 1)
     time = (time_edges[:-1] + time_edges[1:])/2
 
@@ -135,20 +125,23 @@ def template_grid(period,
             transit_params['a/R_s'] = axis
             transit_params['b'] = impact
 
-            result = models.analytic_transit_model(time, transit_params, ld_type='linear', ld_pars=[0.6])
+            result = models.analytic_transit_model(time, transit_params, ld_type='linear', ld_pars=[0.6], max_err=1)
             flux, nu, xp, yp, params, fac = result
 
             flux_arr.append(flux)
 
     flux_arr = np.row_stack(flux_arr)
 
-    time = np.append(np.append(-np.inf, time), np.inf)
-    flux_arr = np.column_stack([np.ones(len(flux_arr)), flux_arr, np.ones(len(flux_arr))])
+    # time_edges = np.append(np.append(-np.inf, time_edges), np.inf)
+    # flux_arr = np.column_stack([np.ones(len(flux_arr)), flux_arr, np.ones(len(flux_arr))])
 
+    # plt.plot(time, flux_arr[-1,1:-1])
+    # plt.show()
+    #
     # plt.imshow(flux_arr)
     # plt.show()
 
-    return time_edges, flux_arr - 1
+    return time_edges, flux_arr - 1, time_step
 
 
 def template_lstsq(time,
@@ -166,14 +159,18 @@ def template_lstsq(time,
     best_depth_scale = np.zeros_like(periods)
     for i, period in enumerate(periods):
         print(i, period)
-        nfolds = np.ceil(np.ptp(time)/period).astype('int')
+
+        result = template_grid(period,
+                               min_duration,
+                               max_duration,
+                               2/(24*12))
+        template_time, template_models, time_step = result
 
         result = search_period(time,
                                flux,
                                flux_err,
                                period,
-                               min_duration / 10 / nfolds,
-                               max_duration,
+                               time_step,
                                template_time,
                                template_models)
 
@@ -190,11 +187,11 @@ def template_lstsq(time,
 
 def test():
 
-    true_period = 3.5
+    true_period = 3.556
     true_midpoint = 1.2
     true_duration = 0.24
 
-    template_time, template_models = template_grid(true_period, 0.2, 0.5, 1/(12*24))
+    template_time, template_models, time_step = template_grid(true_period, 0.2, 0.5, 1/(12*24))
 
     time = np.arange(5000)*1/(24*12)
     phase = np.mod((time - true_midpoint)/true_period, 1)
@@ -211,7 +208,7 @@ def test():
     transit_params['w'] = 160.
     transit_params['Omega'] = 0.
 
-    result = models.analytic_transit_model(time, transit_params, ld_type='linear', ld_pars=[0.6])
+    result = models.analytic_transit_model(time, transit_params, ld_type='linear', ld_pars=[0.6], max_err=1)
     flux, nu, xp, yp, params, fac = result
 
     # template_time = np.array([-np.inf, -0.06, -0.03, 0.03, 0.06, np.inf])
@@ -223,19 +220,16 @@ def test():
                            flux,
                            flux_err,
                            period=true_period,
-                           epoch_step=true_duration/20,
-                           max_duration=0.5,
+                           time_step=time_step,
                            template_time=template_time,
                            template_models=template_models)
     chi2, best_template, best_midpoint, best_depth_scale = result
     print(result)
-    phase = np.mod((time - best_midpoint) / true_period - 0.5, 1)  # Phase with transit at 0.5
-    bin_idx = np.searchsorted(template_time / true_period + 0.5, phase)  # Phase centered at 0.5
-    bin_idx = bin_idx - 1
 
-    model = template_models[best_template, bin_idx]
-    plt.plot(time, flux - 1)
-    plt.plot(time, best_depth_scale*model)
+    phase, model = evaluate_template(time, true_period, best_midpoint, best_depth_scale, template_time, template_models[best_template])
+
+    plt.plot(time, flux)
+    plt.plot(time, model)
     plt.show()
 
 
@@ -280,7 +274,7 @@ def real_test():
     flux_biweight, trend_biweight = wotan.flatten(time,
                                                   flux,
                                                   method='biweight',
-                                                  window_length=0.75,
+                                                  window_length=2.1,
                                                   edge_cutoff=0.5,
                                                   break_tolerance=0.5,
                                                   cval=5,
@@ -295,13 +289,13 @@ def real_test():
                            n_transits_min=1,
                            use_threads=8)
 
-    min_duration = 0.15
-    max_duration = 0.90
-    template_time, template_models = template_grid(140.,
-                                                   min_duration,
-                                                   max_duration,
-                                                   2/(24*12),
-                                                   impact_params=(0, 0.95))
+    min_duration = 0.10996734401247639
+    max_duration = 1.4531496279883123
+    template_time, template_models, _ = template_grid(140.,
+                                                      min_duration,
+                                                      max_duration,
+                                                      2 / (24 * 12),
+                                                      impact_params=(0, 0.95))
 
     print(template_models.shape)
     plt.imshow(template_models)
