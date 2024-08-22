@@ -52,21 +52,17 @@ def search_period(time,
     b_bin = b_bin[1:-1]
 
     # Extend arrays.
-    _, ncols = template_models.shape
+    nrows, ncols = template_models.shape
     a_bin = np.append(a_bin, a_bin[:ncols-1])
     b_bin = np.append(b_bin, b_bin[:ncols-1])
     bin_edges = np.append(bin_edges, bin_edges[1:ncols] + 1)
 
     template_square = template_models**2
 
-    for i in range(counter):
+    for temp_idx in range(nrows):
 
-        alpha_n = np.sum(template_models*b_bin[i:i+ncols], axis=1)
-        beta_n = np.sum(template_square*a_bin[i:i+ncols], axis=1)
-
-        # plt.plot(alpha_n0, alpha_n)
-        # plt.plot(beta_n0, beta_n)
-        # plt.show()
+        alpha_n = np.convolve(b_bin, template_models[temp_idx], 'valid')
+        beta_n = np.convolve(a_bin, template_square[temp_idx], 'valid')
 
         depth_scale_n = alpha_n/beta_n
         chi2_n = chi2_ref - alpha_n**2/beta_n
@@ -74,8 +70,8 @@ def search_period(time,
         arg = np.argmin(chi2_n)
         if chi2_n[arg] < chi2:
             chi2 = chi2_n[arg]
-            best_template = arg
-            best_midpoint = period*(bin_edges[i] + bin_edges[i+ncols + 1])/2
+            best_template = temp_idx
+            best_midpoint = period*(bin_edges[arg] + bin_edges[arg + ncols + 1])/2
             best_depth_scale = depth_scale_n[arg]
 
     return chi2, best_template, best_midpoint, best_depth_scale
@@ -180,7 +176,7 @@ def template_lstsq(time,
         best_depth_scale[i] = result[3]
 
     arg = np.argmin(chi2)
-    phase, flux = evaluate_template(time, periods[arg], best_midpoint[arg], best_depth_scale[arg], template_time, template_models[arg])
+    phase, flux = evaluate_template(time, periods[arg], best_midpoint[arg], best_depth_scale[arg], template_time, template_models[best_template[arg]])
 
     return periods, chi2, best_template, best_midpoint, best_depth_scale, phase, flux
 
@@ -315,6 +311,10 @@ def real_test():
     my_chi2 = result[1]
     phase = result[5]
     model = result[6]
+    sort = np.argsort(phase)
+    phase = phase[sort]
+    flux = flux_biweight[mask][sort]
+    model = model[sort]
 
     plt.figure(figsize=(8, 5))
 
@@ -326,8 +326,8 @@ def real_test():
     plt.ylabel('Chi2')
 
     plt.subplot(212)
-    plt.plot(phase, flux_biweight[mask], 'k.')
-    plt.plot(phase, model)
+    plt.plot(phase, flux, 'k.')
+    plt.plot(phase, model, lw=3)
 
     plt.xlim(-max_duration/140.+0.5, max_duration/140.+0.5)
 
