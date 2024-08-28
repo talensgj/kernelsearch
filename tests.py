@@ -1,4 +1,5 @@
 import os
+from timeit import default_timer as timer
 
 import numpy as np
 import pandas as pd
@@ -10,53 +11,9 @@ from src import models, search
 
 import matplotlib.pyplot as plt
 
-
-def test():
-
-    true_period = 3.556
-    true_midpoint = 1.2
-    true_duration = 0.24
-
-    template_time, template_models, time_step = search.template_grid(true_period, 0.2, 0.5, 1/(12*24))
-
-    time = np.arange(5000)*1/(24*12)
-    phase = np.mod((time - true_midpoint)/true_period, 1)
-    flux = np.where(np.abs(phase) < true_duration/true_period/2, 0.99, 1)
-    flux_err = 0.001*np.ones_like(flux)
-
-    transit_params = dict()
-    transit_params['T_0'] = true_midpoint
-    transit_params['P'] = true_period
-    transit_params['R_p/R_s'] = 0.07
-    transit_params['a/R_s'] = models.duration2axis(true_duration, true_period, 0.07, 0.2, 0.05, 160.)
-    transit_params['b'] = 0.2
-    transit_params['ecc'] = 0.05
-    transit_params['w'] = 160.
-    transit_params['Omega'] = 0.
-
-    result = models.analytic_transit_model(time, transit_params, ld_type='linear', ld_pars=[0.6], max_err=1)
-    flux, nu, xp, yp, params, fac = result
-
-    # template_time = np.array([-np.inf, -0.06, -0.03, 0.03, 0.06, np.inf])
-    # template_models = np.array([[0, -0.5, -0.5, -0.5, 0],
-    #                             [0, 0.5, 0, -0.5, 0],
-    #                             [0, -0.5, 0, 0.5, 0]])
-
-    result = search.search_period(time,
-                                  flux,
-                                  flux_err,
-                                  period=true_period,
-                                  time_step=time_step,
-                                  template_time=template_time,
-                                  template_models=template_models)
-    chi2, best_template, best_midpoint, best_depth_scale = result
-    print(result)
-
-    phase, model = search.evaluate_template(time, true_period, best_midpoint, best_depth_scale, template_time, template_models[best_template])
-
-    plt.plot(time, flux)
-    plt.plot(time, model)
-    plt.show()
+# Global variables.
+RNG = np.random.default_rng(5627323756)
+SECINDAY = 24*3600
 
 
 def bin_lightcurve(lc_data, bin_size=12):
@@ -169,67 +126,159 @@ def real_test():
     plt.show()
 
 
-def test_steps():
+def make_test_lightcurve(length: float,
+                         period: float,
+                         depth: float,
+                         duration: float,
+                         noise_ppm: float = 1000.,
+                         ld_type: str = 'linear',
+                         ld_pars: tuple = (0.6,),
+                         exp_time: float = 0.,
+                         supersampling: int = 1):
 
-    exp_time = 3600./(24*3600)
-    supersample_factor = 360
+    # Compute the scaled semi-major axis.
+    axis = models.duration2axis(duration,
+                                period,
+                                np.sqrt(depth),
+                                0.,
+                                0.,
+                                90.)
 
     # A simple transit model.
     transit_params = dict()
-    transit_params['T_0'] = 0.
-    transit_params['P'] = 3.3847
-    transit_params['R_p/R_s'] = 0.1
-    transit_params['a/R_s'] = 10.
+    transit_params['T_0'] = period*RNG.random()
+    transit_params['P'] = period
+    transit_params['R_p/R_s'] = np.sqrt(depth)
+    transit_params['a/R_s'] = axis
     transit_params['b'] = 0.
     transit_params['ecc'] = 0.
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    duration = models.axis2duration(transit_params['a/R_s'],
-                                    transit_params['P'],
-                                    transit_params['R_p/R_s'],
-                                    transit_params['b'],
-                                    transit_params['ecc'],
-                                    transit_params['w'])
+    npoints = np.ceil(length / exp_time).astype('int')
+    time = np.arange(npoints) * exp_time
+    result = models.analytic_transit_model(time, transit_params, ld_type, ld_pars, max_err=1, exp_time=exp_time,
+                                           supersample_factor=supersampling)
 
-    npoints = np.ceil(10/exp_time).astype('int')
-    time = np.arange(npoints)*exp_time
-    result = models.analytic_transit_model(time, transit_params, 'linear', [0.6], max_err=1, exp_time=exp_time, supersample_factor=supersample_factor)
-    flux = result[0] + np.random.randn(npoints)*1e-3
-    flux_err = 1e-3*np.ones_like(flux)
+    flux = result[0] + RNG.normal(size=npoints)*noise_ppm/1e6
+    flux_err = np.ones_like(flux)*noise_ppm/1e6
+
+    return time, flux, flux_err
+
+
+def make_single_template(period: float,
+                         duration: float,
+                         bin_size: float,
+                         ld_type: str = 'linear',
+                         ld_pars: tuple = (0.6,),
+                         ref_depth: float = 0.005,
+                         exp_time: float = 0.,
+                         supersampling: int = 1):
+
+    # Compute the scaled semi-major axis.
+    axis = models.duration2axis(duration,
+                                period,
+                                np.sqrt(ref_depth),
+                                0.,
+                                0.,
+                                90.)
+
+    # Make the transit model
+    transit_params = dict()
+    transit_params['T_0'] = 0.
+    transit_params['P'] = period
+    transit_params['R_p/R_s'] = np.sqrt(ref_depth)
+    transit_params['a/R_s'] = axis
+    transit_params['b'] = 0.
+    transit_params['ecc'] = 0.
+    transit_params['w'] = 90.
+    transit_params['Omega'] = 0.
+
+    npoints = np.ceil((duration + exp_time) / bin_size).astype('int')
+    template_edges = np.linspace(-(duration + exp_time) / 2, (duration + exp_time) / 2, npoints + 1)
+    time = (template_edges[:-1] + template_edges[1:]) / 2
+
+    result = models.analytic_transit_model(time, transit_params, ld_type, ld_pars, max_err=1, exp_time=exp_time,
+                                           supersample_factor=supersampling)
+    template_model = result[0] - 1
+
+    return template_edges, template_model
+
+
+def test_steps():
+
+    true_period = 3.4849
+    true_duration = 3.4/24
+
+    time, flux, flux_err = make_test_lightcurve(30.,
+                                                true_period,
+                                                0.005,
+                                                true_duration,
+                                                exp_time=300./SECINDAY,
+                                                supersampling=30)
+    flux = flux*2
+    flux_err = flux_err*2
+    weights = 1/flux_err**2
+
+    plt.figure(figsize=(13, 5))
 
     plt.plot(time, flux, '.')
+
+    plt.xlabel('Time [days]')
+    plt.ylabel('Flux')
+
+    plt.tight_layout()
     plt.show()
 
-    variations = [(30./(24*3600), 0., 1),
-                  (30./(24*3600), 300./(24*3600), 30),
-                  (30./(24*3600), 1800./(24*3600), 180),
-                  (30./(24*3600), 3600./(24*3600), 360)]
-                  # (300. / (24 * 3600), 0., 1),
-                  # (300. / (24 * 3600), 300. / (24 * 3600), 30),
-                  # (300. / (24 * 3600), 1800. / (24 * 3600), 180),
-                  # (1800. / (24 * 3600), 0., 1),
-                  # (1800. / (24 * 3600), 300. / (24 * 3600), 30),
-                  # (1800. / (24 * 3600), 1800. / (24 * 3600), 180)
-                  # ]
-    for bin_size, exp_time, supersample_factor in variations:
-        bin_size = (duration+exp_time)/np.ceil((duration + exp_time)/bin_size)
-        print(bin_size, (duration+exp_time)/bin_size)
-        npoints = ((duration+exp_time)/bin_size).astype('int')
-        time_edges = np.linspace(-(duration + exp_time)/2, (duration + exp_time)/2, npoints + 1)
-        time_ = (time_edges[:-1] + time_edges[1:])/2
+    # variations = [(30./SECINDAY, 0., 1),
+    #               (30./SECINDAY, 300./SECINDAY, 30),
+    #               (30./SECINDAY, 1800./SECINDAY, 180),
+    #               (30./SECINDAY, 3600./SECINDAY, 360)]
 
-        result = models.analytic_transit_model(time_, transit_params, 'linear', [0.6], max_err=1, exp_time=exp_time, supersample_factor=supersample_factor)
+    variations = [(30./SECINDAY, 300./SECINDAY, 30),
+                  (60./SECINDAY, 300./SECINDAY, 30),
+                  (120./SECINDAY, 300./SECINDAY, 30),
+                  (300./SECINDAY, 300./SECINDAY, 30),
+                  (600./SECINDAY, 300./SECINDAY, 30)]
 
-        # plt.plot(time_*24, result[0], '.')
-        # plt.show()
+    fig = plt.figure(figsize=(8, 5))
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax2 = fig.add_subplot(2, 1, 2)
 
-        template_models = np.array([result[0] - 1])
-        print(template_models.shape)
+    for bin_size, exp_time, supersampling in variations:
 
-        x, y = search.search_period(time, flux, flux_err, transit_params['P'], time_step=bin_size, template_time=time_edges, template_models=template_models, epoch_search=True)
+        # Scale bin_size to be a multiple of the period.
+        factor = true_period/bin_size
+        bin_size = true_period/np.ceil(factor)
 
-        plt.plot(x, y)
+        # Make the template fit in an integer number of bins.
+        time_edges, template = make_single_template(true_period, true_duration, bin_size, exp_time=exp_time, supersampling=supersampling)
+        template = np.array([template])
+
+        # Perform the epoch search.
+        start = timer()
+        x, y, z, flux_n = search.search_period(time, flux, weights, true_period, time_step=bin_size, template_models=template, epoch_search=True)
+        runtime = timer() - start
+        print(bin_size, runtime)
+
+        # Fix the epoch range.
+        x = np.where(x > true_period, x - true_period, x)
+        sort = np.argsort(x)
+        x = x[sort]
+        y = y[sort]
+        z = z[sort]
+        flux_n = flux_n[sort]
+
+        ax1.plot(x, y)
+
+        phase, model = search.evaluate_template(time, true_period, x[np.argmax(y)], z[np.argmax(y)], flux_n[np.argmax(y)], time_edges, template[0])
+        ax2.plot(phase, flux, 'k.')
+        ax2.plot(phase, model, '.')
+
+    ax1.set_xlabel('Epoch [days]')
+    ax1.set_ylabel('$\Delta \chi^2$')
+
+    fig.tight_layout()
     plt.show()
 
 

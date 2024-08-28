@@ -2,18 +2,21 @@ import numpy as np
 
 from . import models
 
+import matplotlib.pyplot as plt
+
 
 def evaluate_template(time,
                       period,
                       midpoint,
                       depth_scale,
-                      template_time,
+                      flux_level,
+                      template_edges,
                       template_model):
 
     phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
-    bin_idx = np.searchsorted(template_time / period + 0.5, phase)  # Phase centered at 0.5
+    bin_idx = np.searchsorted(template_edges / period + 0.5, phase)  # Phase centered at 0.5
     template_model = np.append(np.append(0, template_model), 0)
-    flux = depth_scale*template_model[bin_idx] + 1
+    flux = depth_scale*template_model[bin_idx] + flux_level
 
     return phase, flux
 
@@ -83,29 +86,22 @@ def template_grid(period,
 
 def search_period(time,
                   flux,
-                  flux_err,
+                  weights,
                   period,
                   time_step,
-                  template_time,
                   template_models,
                   epoch_search=False,
                   ):
 
-    weights = 1/flux_err**2
+    flux_mean = np.sum(weights*flux)/np.sum(weights)
 
-    chi2 = np.sum(weights*(flux - 1)**2)
-    chi2_ref = np.sum(weights*(flux - 1)**2)
-    best_template = -1
-    best_midpoint = np.nan
-    best_depth_scale = np.nan
-
+    a = np.sum(weights)
     phase = np.mod(time/period, 1)
-
     counter = (period/time_step).astype('int')
     bin_edges = np.linspace(0, 1, counter + 1)
     bin_idx = np.searchsorted(bin_edges, phase)
     a_bin = np.bincount(bin_idx, weights=weights, minlength=counter + 2)
-    b_bin = np.bincount(bin_idx, weights=weights*(flux - 1), minlength=counter + 2)
+    b_bin = np.bincount(bin_idx, weights=weights*(flux - flux_mean), minlength=counter + 2)
     a_bin = a_bin[1:-1]
     b_bin = b_bin[1:-1]
 
@@ -117,27 +113,38 @@ def search_period(time,
 
     template_square = template_models**2
 
+    best_dchisq = 0
+    best_template = -1
+    best_midpoint = np.nan
+    best_depth_scale = np.nan
+    best_flux_level = np.nan
     for temp_idx in range(nrows):
 
-        alpha_n = np.convolve(b_bin, template_models[temp_idx], 'valid')
-        beta_n = np.convolve(a_bin, template_square[temp_idx], 'valid')
+        alpha = np.convolve(b_bin, template_models[temp_idx], 'valid')
+        beta = np.convolve(a_bin, template_square[temp_idx], 'valid')
+        gamma = np.convolve(a_bin, template_models[temp_idx], 'valid')
 
-        depth_scale_n = alpha_n/beta_n
-        chi2_n = chi2_ref - alpha_n**2/beta_n
+        # Compute the depth scaling and keep only flux decreases.
+        depth_scale = a*alpha/(a*beta - gamma**2)
+        depth_scale = np.where(depth_scale < 0, 0, depth_scale)
+
+        # Compute the delta chi-square.
+        dchisq = alpha*depth_scale
 
         if epoch_search:
             midpoint = period * (bin_edges[:counter] + bin_edges[ncols:])/2
-            return midpoint, chi2_n
+            flux_level = flux_mean - depth_scale*gamma/a
+            return midpoint, dchisq, depth_scale, flux_level
 
-        # TODO filter min depth?
-        arg = np.argmin(chi2_n)
-        if chi2_n[arg] < chi2:
-            chi2 = chi2_n[arg]
+        arg = np.argmax(dchisq)
+        if dchisq[arg] < best_dchisq:
+            best_dchisq = dchisq[arg]
             best_template = temp_idx
             best_midpoint = period*(bin_edges[arg] + bin_edges[arg + ncols + 1])/2
-            best_depth_scale = depth_scale_n[arg]
+            best_depth_scale = depth_scale[arg]
+            best_flux_level = flux_mean - depth_scale[arg]*gamma[arg]/a
 
-    return chi2, best_template, best_midpoint, best_depth_scale
+    return best_dchisq, best_template, best_midpoint, best_depth_scale, best_flux_level
 
 
 def template_lstsq(time,
@@ -146,13 +153,14 @@ def template_lstsq(time,
                    periods,
                    min_duration,
                    max_duration,
-                   template_time,
+                   template_edges,
                    template_models):
 
-    chi2 = np.zeros_like(periods)
+    dchisq = np.zeros_like(periods)
     best_template = np.zeros_like(periods, dtype='int')
     best_midpoint = np.zeros_like(periods)
     best_depth_scale = np.zeros_like(periods)
+    best_flux_level = np.zeros_like(periods)
     for i, period in enumerate(periods):
         print(i, period)
 
@@ -160,25 +168,31 @@ def template_lstsq(time,
                                min_duration,
                                max_duration,
                                2/(24*12))
-        template_time, template_models, time_step = result
+        template_edges, template_models, time_step = result
 
         result = search_period(time,
                                flux,
                                flux_err,
                                period,
                                time_step,
-                               template_time,
                                template_models)
 
-        chi2[i] = result[0]
+        dchisq[i] = result[0]
         best_template[i] = result[1]
         best_midpoint[i] = result[2]
         best_depth_scale[i] = result[3]
+        best_flux_level[i] = result[4]
 
-    arg = np.argmin(chi2)
-    phase, flux = evaluate_template(time, periods[arg], best_midpoint[arg], best_depth_scale[arg], template_time, template_models[best_template[arg]])
+    arg = np.argmin(dchisq)
+    phase, flux = evaluate_template(time,
+                                    periods[arg],
+                                    best_midpoint[arg],
+                                    best_depth_scale[arg],
+                                    best_flux_level[arg],
+                                    template_edges,
+                                    template_models[best_template[arg]])
 
-    return periods, chi2, best_template, best_midpoint, best_depth_scale, phase, flux
+    return periods, dchisq, best_template, best_midpoint, best_depth_scale, phase, flux
 
 
 def main():
