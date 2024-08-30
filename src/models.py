@@ -44,6 +44,18 @@ def axis2duration(a, per, p, b, ecc, w):
     return transit_duration
 
 
+def axis2full(a, per, p, b, ecc, w):
+    """"""
+
+    sin_sq = ((1 - p) ** 2 - b ** 2) / (a ** 2 - b ** 2)
+    transit_full = per / np.pi * np.arcsin(np.sqrt(sin_sq))
+
+    # Eccentricity correction (for transits).
+    transit_full = transit_full * np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+
+    return transit_full
+
+
 def duration2axis(transit_duration, per, p, b, ecc, w):
     """ Convert the scaled semi-major axis to transit duration.
     """
@@ -162,6 +174,8 @@ def analytic_transit_model(time: np.ndarray,
                            transit_params: dict,
                            ld_type: str,
                            ld_pars: ArrayLike,
+                           exp_time: Optional[float] = None,
+                           supersample_factor: Optional[int] = None,
                            fac: Optional[float] = None,
                            max_err: float = 0.5
                            ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, batman.TransitParams, float]:
@@ -227,7 +241,7 @@ def analytic_transit_model(time: np.ndarray,
     params.limb_dark = ld_type
 
     # Create the TransitModel instance.
-    model = batman.TransitModel(params, time, fac=fac, max_err=max_err)
+    model = batman.TransitModel(params, time, fac=fac, max_err=max_err, exp_time=exp_time, supersample_factor=supersample_factor)
 
     # Compute the true anomaly and the flux.
     nu = model.get_true_anomaly()
