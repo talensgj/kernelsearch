@@ -1,12 +1,11 @@
 from typing import Optional
 
 import numpy as np
+from scipy import signal
 
 from transitleastsquares import grid, tls_constants
 
 from . import models
-
-import matplotlib.pyplot as plt
 
 SECINDAY = 24*3600
 
@@ -242,33 +241,31 @@ def make_template_grid(periods: np.ndarray,
 
 
 def search_period(time,
-                  flux,
+                  wdflux,
                   weights,
+                  mean_flux,
+                  sum_weights,
                   period,
                   bin_size,
                   template_models,
-                  epoch_search=False,
+                  template_square,
                   ):
 
-    flux_mean = np.sum(weights*flux)/np.sum(weights)
+    nrows, ncols = template_models.shape
 
-    a = np.sum(weights)
     phase = np.mod(time/period, 1)
-    counter = (period/bin_size).astype('int')
-    bin_edges = np.linspace(0, 1, counter + 1)
+    num_bins = np.ceil(period/bin_size).astype('int')
+    bin_edges = np.linspace(0, 1, num_bins + 1)
     bin_idx = np.searchsorted(bin_edges, phase)
-    a_bin = np.bincount(bin_idx, weights=weights, minlength=counter + 2)
-    b_bin = np.bincount(bin_idx, weights=weights*(flux - flux_mean), minlength=counter + 2)
+    a_bin = np.bincount(bin_idx, weights=weights, minlength=num_bins + 2 + ncols - 1)
+    b_bin = np.bincount(bin_idx, weights=wdflux, minlength=num_bins + 2 + ncols - 1)
     a_bin = a_bin[1:-1]
     b_bin = b_bin[1:-1]
 
     # Extend arrays.
-    nrows, ncols = template_models.shape
-    a_bin = np.append(a_bin, a_bin[:ncols-1])
-    b_bin = np.append(b_bin, b_bin[:ncols-1])
+    a_bin[num_bins:] = a_bin[:ncols-1]
+    b_bin[num_bins:] = b_bin[:ncols-1]
     bin_edges = np.append(bin_edges, bin_edges[1:ncols] + 1)
-
-    template_square = template_models**2
 
     best_dchisq = 0
     best_template = -1
@@ -277,21 +274,28 @@ def search_period(time,
     best_flux_level = np.nan
     for temp_idx in range(nrows):
 
-        alpha = np.convolve(b_bin, template_models[temp_idx], 'valid')
-        beta = np.convolve(a_bin, template_square[temp_idx], 'valid')
-        gamma = np.convolve(a_bin, template_models[temp_idx], 'valid')
+        # Takes ~200 ms per hit.
+        # alpha = np.correlate(b_bin, template_models[temp_idx], mode='valid')
+        # beta = np.correlate(a_bin, template_square[temp_idx], mode='valid')
+        # gamma = np.correlate(a_bin, template_models[temp_idx], mode='valid')
+
+        # Takes ~200 ms per hit.
+        alpha = signal.correlate(b_bin, template_models[temp_idx], mode='valid', method='direct')
+        beta = signal.correlate(a_bin, template_square[temp_idx], mode='valid', method='direct')
+        gamma = signal.correlate(a_bin, template_models[temp_idx], mode='valid', method='direct')
+
+        # Takes ~120 ms per hit, but gives bad peaks when there are gaps.
+        # alpha = signal.correlate(b_bin, template_models[temp_idx], mode='valid', method='fft')
+        # beta = signal.correlate(a_bin, template_square[temp_idx], mode='valid', method='fft')
+        # gamma = signal.correlate(a_bin, template_models[temp_idx], mode='valid', method='fft')
 
         # Compute the depth scaling and keep only flux decreases.
-        depth_scale = a*alpha/(a*beta - gamma**2)
+        depth_scale = sum_weights*alpha/(sum_weights*beta - gamma**2)
+        depth_scale = np.where(~np.isfinite(depth_scale), 0, depth_scale)
         depth_scale = np.where(depth_scale < 0, 0, depth_scale)
 
         # Compute the delta chi-square.
         dchisq = alpha*depth_scale
-
-        if epoch_search:
-            midpoint = period * (bin_edges[:counter] + bin_edges[ncols:])/2
-            flux_level = flux_mean - depth_scale*gamma/a
-            return midpoint, dchisq, depth_scale, flux_level
 
         arg = np.argmax(dchisq)
         if dchisq[arg] > best_dchisq:
@@ -299,7 +303,7 @@ def search_period(time,
             best_template = temp_idx
             best_midpoint = period*(bin_edges[arg] + bin_edges[arg + ncols])/2
             best_depth_scale = depth_scale[arg]
-            best_flux_level = flux_mean - depth_scale[arg]*gamma[arg]/a
+            best_flux_level = mean_flux - depth_scale[arg]*gamma[arg]/sum_weights
 
     return best_dchisq, best_template, best_midpoint, best_depth_scale, best_flux_level
 
@@ -314,63 +318,68 @@ def template_lstsq(time,
                    oversampling: int = 3):
 
     weights = 1/flux_err**2
-
-    # Get the duration grid.
-    bin_size, duration_grid = get_duration_grid(periods,
-                                                exp_time=exp_time,
-                                                min_bin_size=min_bin_size,
-                                                max_bin_size=max_bin_size,
-                                                oversampling=oversampling)
-
-    # Compute the template models.
-    template_edges, template_models = make_template_grid(periods,
-                                                         duration_grid,
-                                                         bin_size=bin_size,
-                                                         exp_time=exp_time)
+    sum_weights = np.sum(weights)
+    mean_flux = np.sum(weights*flux)/sum_weights
+    wdflux = weights*(flux - mean_flux)
 
     dchisq = np.zeros_like(periods)
-    best_template = np.zeros_like(periods, dtype='int')
-    best_midpoint = np.zeros_like(periods)
-    best_depth_scale = np.zeros_like(periods)
-    best_flux_level = np.zeros_like(periods)
+    best_period = np.nan
+    best_midpoint = np.nan
+    best_duration = np.nan
+    best_depth_scale = np.nan
+    best_flux_level = np.nan
     for i, period in enumerate(periods):
-        print(i)
 
-        # Get the duration limits at this period.
-        min_duration, max_duration = _get_duration_lims(period)
+        # Recompute the template every 100 periods.
+        if i % 100 == 0:
 
-        # Select the templates to use at this period.
-        imin = np.searchsorted(duration_grid, min_duration)
-        imax = np.searchsorted(duration_grid, max_duration)
-        imin = np.maximum(imin - 1, 0)
-        imax = np.minimum(imax + 1, len(duration_grid) - 1)
+            # Get the duration grid.
+            bin_size, duration_grid = get_duration_grid(periods[i:i+100],
+                                                        exp_time=exp_time,
+                                                        min_bin_size=min_bin_size,
+                                                        max_bin_size=max_bin_size,
+                                                        oversampling=oversampling)
+
+            # Compute the template models.
+            template_edges, template_models = make_template_grid(periods[i:i+100],
+                                                                 duration_grid,
+                                                                 bin_size=bin_size,
+                                                                 exp_time=exp_time)
+            template_square = template_models**2
 
         # Perform the transit search.
         result = search_period(time,
-                               flux,
+                               wdflux,
                                weights,
+                               mean_flux,
+                               sum_weights,
                                period,
                                bin_size,
-                               template_models[imin:imax])
+                               template_models,
+                               template_square)
 
         # Update the results.
         dchisq[i] = result[0]
-        best_template[i] = result[1] + imin
-        best_midpoint[i] = result[2]
-        best_depth_scale[i] = result[3]
-        best_flux_level[i] = result[4]
+
+        if np.all(dchisq[0:i] < dchisq[i]):
+            best_period = periods[i]
+            best_midpoint = result[2]
+            best_duration = duration_grid[result[1]]
+            best_depth_scale = result[3]
+            best_flux_level = result[4]
+            best_template_edges = template_edges
+            best_template_model = template_models[result[1]]
 
     # Return the template model for the highest peak.
-    arg = np.argmax(dchisq)
     phase, model = evaluate_template(time,
-                                     periods[arg],
-                                     best_midpoint[arg],
-                                     best_depth_scale[arg],
-                                     best_flux_level[arg],
-                                     template_edges,
-                                     template_models[best_template[arg]])
+                                     best_period,
+                                     best_midpoint,
+                                     best_depth_scale,
+                                     best_flux_level,
+                                     best_template_edges,
+                                     best_template_model)
 
-    return periods, dchisq, best_template, best_midpoint, best_depth_scale, phase, model
+    return periods, dchisq, best_midpoint, best_duration, best_depth_scale, best_flux_level, phase, model
 
 
 def main():
