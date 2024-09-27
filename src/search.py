@@ -1,4 +1,6 @@
 from typing import Optional
+import multiprocessing as mp
+from functools import partial
 
 import numpy as np
 from scipy import signal
@@ -240,12 +242,12 @@ def make_template_grid(periods: np.ndarray,
     return template_edges, template_models
 
 
-def search_period(time,
+def search_period(period,
+                  time,
                   wdflux,
                   weights,
                   mean_flux,
                   sum_weights,
-                  period,
                   bin_size,
                   template_models,
                   template_square,
@@ -308,67 +310,79 @@ def search_period(time,
     return best_dchisq, best_template, best_midpoint, best_depth_scale, best_flux_level
 
 
-def template_lstsq(time,
-                   flux,
-                   flux_err,
-                   periods,
+def template_lstsq(time: np.ndarray,
+                   flux: np.ndarray,
+                   flux_err: np.ndarray,
+                   periods: np.ndarray,
                    exp_time: Optional[float] = None,
                    min_bin_size: float = 1/(24*60),
                    max_bin_size: float = 5/(24*60),
-                   oversampling: int = 3):
+                   oversampling: int = 3,
+                   block_size: int = 100,
+                   num_processes: int = 1):
+    """ Perform a transit search with templates.
+    """
 
+    # Pre-compute some arrays.
     weights = 1/flux_err**2
     sum_weights = np.sum(weights)
     mean_flux = np.sum(weights*flux)/sum_weights
     wdflux = weights*(flux - mean_flux)
 
+    # Set up variables for the output.
     dchisq = np.zeros_like(periods)
     best_period = np.nan
     best_midpoint = np.nan
     best_duration = np.nan
     best_depth_scale = np.nan
     best_flux_level = np.nan
-    for i, period in enumerate(periods):
+    for i in range(0, len(periods), block_size):
 
-        # Recompute the template every 100 periods.
-        if i % 100 == 0:
+        # Create a pool for multiprocessing.
+        with mp.Pool(processes=num_processes) as pool:
 
-            # Get the duration grid.
-            bin_size, duration_grid = get_duration_grid(periods[i:i+100],
+            # Get the duration grid for the current period set.
+            bin_size, duration_grid = get_duration_grid(periods[i:i+block_size],
                                                         exp_time=exp_time,
                                                         min_bin_size=min_bin_size,
                                                         max_bin_size=max_bin_size,
                                                         oversampling=oversampling)
 
-            # Compute the template models.
-            template_edges, template_models = make_template_grid(periods[i:i+100],
+            # Compute the template models for the current period set.
+            template_edges, template_models = make_template_grid(periods[i:i+block_size],
                                                                  duration_grid,
                                                                  bin_size=bin_size,
                                                                  exp_time=exp_time)
             template_square = template_models**2
 
-        # Perform the transit search.
-        result = search_period(time,
-                               wdflux,
-                               weights,
-                               mean_flux,
-                               sum_weights,
-                               period,
-                               bin_size,
-                               template_models,
-                               template_square)
+            # Set up muliprocessed period searches.
+            params = partial(search_period,
+                             time=time,
+                             wdflux=wdflux,
+                             weights=weights,
+                             mean_flux=mean_flux,
+                             sum_weights=sum_weights,
+                             bin_size=bin_size,
+                             template_models=template_models,
+                             template_square=template_square)
 
-        # Update the results.
-        dchisq[i] = result[0]
+            # Do period searches.
+            j = 0
+            for result in pool.imap(params, periods[i:i+block_size]):
 
-        if np.all(dchisq[0:i] < dchisq[i]):
-            best_period = periods[i]
-            best_midpoint = result[2]
-            best_duration = duration_grid[result[1]]
-            best_depth_scale = result[3]
-            best_flux_level = result[4]
-            best_template_edges = template_edges
-            best_template_model = template_models[result[1]]
+                # Update the results.
+                dchisq[i+j] = result[0]
+
+                if np.all(dchisq[0:i+j] < dchisq[i+j]):
+                    best_period = periods[i+j]
+                    best_midpoint = result[2]
+                    best_duration = duration_grid[result[1]]
+                    best_depth_scale = result[3]
+                    best_flux_level = result[4]
+                    best_template_edges = template_edges
+                    best_template_model = template_models[result[1]]
+
+                j += 1
 
     # Return the template model for the highest peak.
     phase, model = evaluate_template(time,
