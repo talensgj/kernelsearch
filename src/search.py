@@ -187,7 +187,8 @@ def make_template_grid(periods: np.ndarray,
                        ld_type: str = 'linear',
                        ld_pars: tuple = (0.6,),
                        ref_depth: float = 0.005,
-                       exp_time: Optional[float] = None):
+                       exp_time: Optional[float] = None,
+                       window_length: Optional[float] = None):
 
     if exp_time is None:
         exp_time = 0.
@@ -195,9 +196,22 @@ def make_template_grid(periods: np.ndarray,
     else:
         supersample_factor = np.ceil(exp_time*SECINDAY/10.).astype('int')
 
+    if window_length is None:
+        use_smoothing = False
+        window_length = 0.
+        supersample_factor_smooth = 1
+    elif window_length/np.amin(periods) > 0.5:  # TODO improve on this.
+        print('Warning: window_length too long for shortest period, ignoring...')
+        use_smoothing = False
+        window_length = 0.
+        supersample_factor_smooth = 1
+    else:
+        use_smoothing = True
+        supersample_factor_smooth = np.ceil(window_length*SECINDAY/10.).astype('int')
+
     ref_period = np.amax(periods)
     max_duration = np.amax(duration_grid)
-    delta_time = max_duration + exp_time
+    delta_time = max_duration + np.maximum(exp_time, window_length)
 
     # Determine the times at which to evaluate the template.
     nbins = np.ceil(delta_time/bin_size).astype('int')
@@ -237,7 +251,19 @@ def make_template_grid(periods: np.ndarray,
                                                exp_time=exp_time,
                                                supersample_factor=supersample_factor,
                                                max_err=1.)
-        template_models[row_idx] = result[0] - 1
+
+        if use_smoothing:
+            result_smooth = models.analytic_transit_model(time,
+                                                          transit_params,
+                                                          ld_type,
+                                                          ld_pars,
+                                                          exp_time=window_length,
+                                                          supersample_factor=supersample_factor_smooth,
+                                                          max_err=1.)
+
+            template_models[row_idx] = result[0]/result_smooth[0] - 1
+        else:
+            template_models[row_idx] = result[0] - 1
 
     return template_edges, template_models
 
@@ -315,6 +341,7 @@ def template_lstsq(time: np.ndarray,
                    flux_err: np.ndarray,
                    periods: np.ndarray,
                    exp_time: Optional[float] = None,
+                   window_length: Optional[float] = None,
                    min_bin_size: float = 1/(24*60),
                    max_bin_size: float = 5/(24*60),
                    oversampling: int = 3,
@@ -328,6 +355,7 @@ def template_lstsq(time: np.ndarray,
     sum_weights = np.sum(weights)
     mean_flux = np.sum(weights*flux)/sum_weights
     wdflux = weights*(flux - mean_flux)
+    chisq0 = np.sum(weights*(flux - mean_flux)**2)
 
     # Set up variables for the output.
     dchisq = np.zeros_like(periods)
@@ -352,7 +380,8 @@ def template_lstsq(time: np.ndarray,
             template_edges, template_models = make_template_grid(periods[i:i+block_size],
                                                                  duration_grid,
                                                                  bin_size=bin_size,
-                                                                 exp_time=exp_time)
+                                                                 exp_time=exp_time,
+                                                                 window_length=window_length)
             template_square = template_models**2
 
             # Set up muliprocessed period searches.
@@ -393,7 +422,7 @@ def template_lstsq(time: np.ndarray,
                                      best_template_edges,
                                      best_template_model)
 
-    return periods, dchisq, best_midpoint, best_duration, best_depth_scale, best_flux_level, phase, model
+    return periods, dchisq, best_midpoint, best_duration, best_depth_scale, best_flux_level, phase, model, chisq0
 
 
 def main():
