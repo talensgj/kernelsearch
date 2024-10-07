@@ -2,8 +2,10 @@ from typing import Optional
 import multiprocessing as mp
 from functools import partial
 
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal
+from astropy.stats import sigma_clipped_stats
 
 from transitleastsquares import grid, tls_constants
 
@@ -277,6 +279,7 @@ def search_period(period,
                   bin_size,
                   template_models,
                   template_square,
+                  debug=False
                   ):
 
     nrows, ncols = template_models.shape
@@ -295,11 +298,10 @@ def search_period(period,
     b_bin[num_bins:] = b_bin[:ncols-1]
     bin_edges = np.append(bin_edges, bin_edges[1:ncols] + 1)
 
-    best_dchisq = 0
-    best_template = -1
-    best_midpoint = np.nan
-    best_depth_scale = np.nan
-    best_flux_level = np.nan
+    # Initialize some arrays.
+    dchisq = np.zeros((nrows, num_bins))
+    flux_level = np.zeros((nrows, num_bins))
+    depth_scale = np.zeros((nrows, num_bins))
     for temp_idx in range(nrows):
 
         # Takes ~200 ms per hit.
@@ -317,23 +319,61 @@ def search_period(period,
         # beta = signal.correlate(a_bin, template_square[temp_idx], mode='valid', method='fft')
         # gamma = signal.correlate(a_bin, template_models[temp_idx], mode='valid', method='fft')
 
-        # Compute the depth scaling and keep only flux decreases.
-        depth_scale = sum_weights*alpha/(sum_weights*beta - gamma**2)
-        depth_scale = np.where(~np.isfinite(depth_scale), 0, depth_scale)
-        depth_scale = np.where(depth_scale < 0, 0, depth_scale)
+        # Compute the depth scaling and remove bad values.
+        depth_scale_ = sum_weights*alpha/(sum_weights*beta - gamma**2)
+        mask = ~np.isfinite(depth_scale_)
+        depth_scale_[mask] = 0
+        depth_scale[temp_idx] = depth_scale_
+
+        # Compute the flux level.
+        flux_level[temp_idx] = mean_flux - depth_scale_ * gamma / sum_weights
 
         # Compute the delta chi-square.
-        dchisq = alpha*depth_scale
+        dchisq[temp_idx] = alpha*depth_scale_
 
-        arg = np.argmax(dchisq)
-        if dchisq[arg] > best_dchisq:
-            best_dchisq = dchisq[arg]
-            best_template = temp_idx
-            best_midpoint = period*(bin_edges[arg] + bin_edges[arg + ncols])/2
-            best_depth_scale = depth_scale[arg]
-            best_flux_level = mean_flux - depth_scale[arg]*gamma[arg]/sum_weights
+    # Compute a minimum dchisq by looking at the brightenings.
+    dchisq_floor = np.amax(dchisq[depth_scale < 0])
 
-    return best_dchisq, best_template, best_midpoint, best_depth_scale, best_flux_level
+    if debug:
+        plt.figure(figsize=(8, 8))
+
+        plt.subplot(311)
+        vlim = np.amax(np.abs(dchisq - dchisq_floor))
+        plt.pcolormesh(dchisq - dchisq_floor, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        plt.colorbar(label='dchisq')
+        plt.xlabel('Midpoint')
+        plt.ylabel('Duration')
+
+        plt.subplot(312)
+        vlim = np.amax(np.abs(flux_level - 1))
+        plt.pcolormesh(flux_level - 1, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        plt.colorbar(label='flux level - 1')
+        plt.xlabel('Midpoint')
+        plt.ylabel('Duration')
+
+        plt.subplot(313)
+        vlim = np.amax(np.abs(depth_scale))
+        plt.pcolormesh(depth_scale, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        plt.colorbar(label='depth scale')
+        plt.xlabel('Midpoint')
+        plt.ylabel('Duration')
+
+        plt.tight_layout()
+        plt.show()
+
+    # Remove models that correspond to brightenings.
+    mask = depth_scale < 0
+    dchisq[mask] = 0
+
+    # Find the peak dchisq and store the best fit parameters.
+    irow, icol = np.unravel_index(dchisq.argmax(), dchisq.shape)
+    best_dchisq = dchisq[irow, icol]
+    best_template = irow
+    best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
+    best_depth_scale = depth_scale[irow, icol]
+    best_flux_level = flux_level[irow, icol]
+
+    return best_dchisq, best_template, best_midpoint, best_depth_scale, best_flux_level, dchisq_floor
 
 
 def template_lstsq(time: np.ndarray,
@@ -359,6 +399,7 @@ def template_lstsq(time: np.ndarray,
 
     # Set up variables for the output.
     dchisq = np.zeros_like(periods)
+    dchisq_floor = np.zeros_like(periods)
     best_period = np.nan
     best_midpoint = np.nan
     best_duration = np.nan
@@ -401,6 +442,7 @@ def template_lstsq(time: np.ndarray,
 
                 # Update the results.
                 dchisq[i+j] = result[0]
+                dchisq_floor[i+j] = result[5]
 
                 if np.all(dchisq[0:i+j] < dchisq[i+j]):
                     best_period = periods[i+j]
@@ -422,7 +464,7 @@ def template_lstsq(time: np.ndarray,
                                      best_template_edges,
                                      best_template_model)
 
-    return periods, dchisq, best_midpoint, best_duration, best_depth_scale, best_flux_level, phase, model, chisq0
+    return periods, dchisq, best_midpoint, best_duration, best_depth_scale, best_flux_level, phase, model, chisq0, dchisq_floor
 
 
 def main():
