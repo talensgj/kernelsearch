@@ -332,7 +332,11 @@ def search_period(period,
         dchisq[temp_idx] = alpha*depth_scale_
 
     # Compute a minimum dchisq by looking at the brightenings.
-    dchisq_floor = np.amax(dchisq[depth_scale < 0])
+    mask = depth_scale < 0
+    if np.any(mask):
+        dchisq_floor = np.amax(dchisq[mask])
+    else:
+        dchisq_floor = 0
 
     if debug:
         plt.figure(figsize=(8, 8))
@@ -340,7 +344,7 @@ def search_period(period,
         plt.subplot(311)
         vlim = np.amax(np.abs(dchisq - dchisq_floor))
         plt.pcolormesh(dchisq - dchisq_floor, vmin=-vlim, vmax=vlim, cmap='coolwarm')
-        plt.colorbar(label='dchisq')
+        plt.colorbar(label=r'$\Delta \chi^2_{-} - \Delta \chi^2_{+}$')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
 
