@@ -5,7 +5,6 @@ from functools import partial
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal
-from astropy.stats import sigma_clipped_stats
 
 from transitleastsquares import grid, tls_constants
 
@@ -126,18 +125,16 @@ def get_duration_lims(periods):
     return min_duration, max_duration
 
 
-def get_duration_grid(periods: np.ndarray,
-                      ref_depth: float = 0.005,
-                      exp_time: Optional[float] = None,
-                      min_bin_size: float = 1/(24*60),  # TODO are these good values?
-                      max_bin_size: float = 5/(24*60),  # TODO are these good values?
-                      oversampling: int = 3):
+def _get_bin_size(min_duration,
+                  ref_period,
+                  ref_depth: float = 0.005,
+                  exp_time: Optional[float] = None,
+                  min_bin_size: float = 1 / (24 * 60),  # TODO are these good values?
+                  max_bin_size: float = 5 / (24 * 60),  # TODO are these good values?
+                  oversampling: int = 3):
 
     if exp_time is None:
         exp_time = 0.
-
-    ref_period = np.amax(periods)
-    min_duration, max_duration = get_duration_lims(periods)
 
     # Compute the approriate bin_size.
     axis = models.duration2axis(min_duration,
@@ -149,9 +146,9 @@ def get_duration_grid(periods: np.ndarray,
                             np.sqrt(ref_depth),
                             0., 0., 90.)
 
-    ingress_time = (min_duration - full)/2
+    ingress_time = (min_duration - full) / 2
     ingress_time = np.maximum(ingress_time, exp_time)
-    bin_size = ingress_time/oversampling
+    bin_size = ingress_time / oversampling
 
     if bin_size < min_bin_size:
         bin_size = min_bin_size
@@ -159,9 +156,13 @@ def get_duration_grid(periods: np.ndarray,
     if bin_size > max_bin_size:
         bin_size = max_bin_size
 
-    # duration_step = oversampling*bin_size
-    # nvals = np.ceil((max_duration - min_duration)/duration_step).astype('int')  # TODO Use bin_size or (fraction of) ingress_time?
-    # duration_grid = min_duration + duration_step*np.arange(nvals)
+    return bin_size
+
+
+def _duration_grid(min_duration: float,
+                   max_duration: float,
+                   ref_period: float,
+                   ref_depth: float = 0.005):
 
     duration = min_duration
     duration_grid = [min_duration]
@@ -174,11 +175,37 @@ def get_duration_grid(periods: np.ndarray,
                                 ref_period,
                                 np.sqrt(ref_depth),
                                 0., 0., 90.)
-        duration_step = (duration - full)/4  # Increment by 1/2 of the previous transits egress.
+        duration_step = (duration - full) / 4  # Increment by 1/2 of the previous transits egress.
         duration = duration + duration_step
         duration_grid.append(duration)
 
     duration_grid = np.array(duration_grid)
+
+    return duration_grid
+
+
+def get_duration_grid(periods: np.ndarray,
+                      ref_depth: float = 0.005,
+                      exp_time: Optional[float] = None,
+                      min_bin_size: float = 1/(24*60),  # TODO are these good values?
+                      max_bin_size: float = 5/(24*60),  # TODO are these good values?
+                      oversampling: int = 3):
+
+    ref_period = np.amax(periods)
+    min_duration, max_duration = get_duration_lims(periods)
+
+    bin_size = _get_bin_size(min_duration,
+                             ref_period,
+                             ref_depth=ref_depth,
+                             exp_time=exp_time,
+                             min_bin_size=min_bin_size,
+                             max_bin_size=max_bin_size,
+                             oversampling=oversampling)
+
+    duration_grid = _duration_grid(min_duration,
+                                   max_duration,
+                                   ref_period,
+                                   ref_depth=ref_depth)
 
     return bin_size, duration_grid
 
