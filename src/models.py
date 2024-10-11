@@ -6,6 +6,7 @@ from numpy.typing import ArrayLike
 import batman
 from astropy import constants, units
 
+RNG = np.random.default_rng(5627323756)
 DEG2RAD = np.pi / 180
 RAD2DEG = 180 / np.pi
 
@@ -192,6 +193,10 @@ def analytic_transit_model(time: np.ndarray,
         The limb-darkening law to use for the star.
     ld_pars: array-like
         The coefficients of the limb-darkening polynomial.
+    exp_time: float or None
+        The exposure time to use when evaluating the transit model.
+    supersample_factor: int or None
+        The supersampling to use when evaluating with an exposure time set.
     fac: float or none
         The batman.TransitModel fac parameter.
     max_err: float
@@ -213,6 +218,10 @@ def analytic_transit_model(time: np.ndarray,
         The batman.TransitModel fac parameter used.
 
     """
+
+    if exp_time is None:
+        exp_time = 0.
+        supersample_factor = 1
 
     # Input parameters.
     t0 = transit_params['T_0']
@@ -260,3 +269,49 @@ def analytic_transit_model(time: np.ndarray,
     yp = xi * np.sin(Omega) + yi * np.cos(Omega)
 
     return flux, nu, xp, yp, params, model.fac
+
+
+def make_test_lightcurve(length: float,
+                         period: float,
+                         depth: float,
+                         duration: float,
+                         noise_ppm: float = 1000.,
+                         ld_type: str = 'linear',
+                         ld_pars: tuple = (0.6,),
+                         exp_time: float = 0.,
+                         supersampling: int = 1):
+
+    # Compute the scaled semi-major axis.
+    axis = duration2axis(duration,
+                         period,
+                         np.sqrt(depth),
+                         0.,
+                         0.,
+                         90.)
+
+    # A simple transit model.
+    transit_params = dict()
+    transit_params['T_0'] = period*RNG.random()
+    transit_params['P'] = period
+    transit_params['R_p/R_s'] = np.sqrt(depth)
+    transit_params['a/R_s'] = axis
+    transit_params['b'] = 0.
+    transit_params['ecc'] = 0.
+    transit_params['w'] = 90.
+    transit_params['Omega'] = 0.
+
+    npoints = np.ceil(length / exp_time).astype('int')
+    time = np.arange(npoints) * exp_time
+
+    result = analytic_transit_model(time,
+                                    transit_params,
+                                    ld_type,
+                                    ld_pars,
+                                    max_err=1,
+                                    exp_time=exp_time,
+                                    supersample_factor=supersampling)
+
+    flux = result[0] + RNG.normal(size=npoints)*noise_ppm/1e6
+    flux_err = np.ones_like(flux)*noise_ppm/1e6
+
+    return time, flux, flux_err
