@@ -1,4 +1,5 @@
 from typing import Optional
+from collections import namedtuple
 import multiprocessing as mp
 from functools import partial
 
@@ -359,18 +360,18 @@ def search_period(period,
         dchisq[temp_idx] = alpha*depth_scale_
 
     # Compute a minimum dchisq by looking at the brightenings.
-    mask = depth_scale < 0
-    if np.any(mask):
-        dchisq_floor = np.amax(dchisq[mask])
+    select_inc = depth_scale < 0
+    if np.any(select_inc):
+        dchisq_inc = np.amax(dchisq[select_inc])
     else:
-        dchisq_floor = 0
+        dchisq_inc = 0
 
     if debug:
         plt.figure(figsize=(8, 8))
 
         plt.subplot(311)
-        vlim = np.amax(np.abs(dchisq - dchisq_floor))
-        plt.pcolormesh(dchisq - dchisq_floor, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        vlim = np.amax(np.abs(dchisq - dchisq_inc))
+        plt.pcolormesh(dchisq - dchisq_inc, vmin=-vlim, vmax=vlim, cmap='coolwarm')
         plt.colorbar(label=r'$\Delta \chi^2_{-} - \Delta \chi^2_{+}$')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
@@ -393,18 +394,30 @@ def search_period(period,
         plt.show()
 
     # Remove models that correspond to brightenings.
-    mask = depth_scale < 0
-    dchisq[mask] = 0
+    dchisq[select_inc] = 0
 
     # Find the peak dchisq and store the best fit parameters.
     irow, icol = np.unravel_index(dchisq.argmax(), dchisq.shape)
-    best_dchisq = dchisq[irow, icol]
-    best_template = irow
+    dchisq_dec = dchisq[irow, icol]
+    best_template_idx = irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
     best_depth_scale = depth_scale[irow, icol]
     best_flux_level = flux_level[irow, icol]
 
-    return best_dchisq, best_template, best_midpoint, best_depth_scale, best_flux_level, dchisq_floor
+    return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+
+
+SearchResult = namedtuple('lstsq_result',
+                          ['periods',
+                           'chisq0',
+                           'dchisq_dec',
+                           'dchisq_inc',
+                           'best_midpoint',
+                           'best_duration',
+                           'best_depth_scale',
+                           'best_flux_level',
+                           'model_phase',
+                           'model_flux'])
 
 
 def template_lstsq(time: np.ndarray,
@@ -417,7 +430,8 @@ def template_lstsq(time: np.ndarray,
                    max_bin_size: float = 5/(24*60),
                    oversampling: int = 3,
                    block_size: int = 100,
-                   num_processes: int = 1):
+                   num_processes: int = 1
+                   ) -> SearchResult:
     """ Perform a transit search with templates.
     """
 
@@ -429,8 +443,8 @@ def template_lstsq(time: np.ndarray,
     chisq0 = np.sum(weights*(flux - mean_flux)**2)
 
     # Set up variables for the output.
-    dchisq = np.zeros_like(periods)
-    dchisq_floor = np.zeros_like(periods)
+    dchisq_dec = np.zeros_like(periods)
+    dchisq_inc = np.zeros_like(periods)
     best_period = np.nan
     best_midpoint = np.nan
     best_duration = np.nan
@@ -472,30 +486,42 @@ def template_lstsq(time: np.ndarray,
             for result in pool.imap(params, periods[i:i+block_size]):
 
                 # Update the results.
-                dchisq[i+j] = result[0]
-                dchisq_floor[i+j] = result[5]
+                dchisq_dec[i+j] = result[0]
+                dchisq_inc[i+j] = result[1]
 
-                if np.all(dchisq[0:i+j] < dchisq[i+j]):
+                if np.all(dchisq_dec[0:i+j] < dchisq_dec[i+j]):
+                    best_template_idx = result[2]
                     best_period = periods[i+j]
-                    best_midpoint = result[2]
-                    best_duration = duration_grid[result[1]]
-                    best_depth_scale = result[3]
-                    best_flux_level = result[4]
+                    best_midpoint = result[3]
+                    best_duration = duration_grid[best_template_idx]
+                    best_depth_scale = result[4]
+                    best_flux_level = result[5]
                     best_template_edges = template_edges
-                    best_template_model = template_models[result[1]]
+                    best_template_model = template_models[best_template_idx]
 
                 j += 1
 
     # Return the template model for the highest peak.
-    phase, model = evaluate_template(time,
-                                     best_period,
-                                     best_midpoint,
-                                     best_depth_scale,
-                                     best_flux_level,
-                                     best_template_edges,
-                                     best_template_model)
+    model_phase, model_flux = evaluate_template(time,
+                                                best_period,
+                                                best_midpoint,
+                                                best_depth_scale,
+                                                best_flux_level,
+                                                best_template_edges,
+                                                best_template_model)
 
-    return periods, dchisq, best_midpoint, best_duration, best_depth_scale, best_flux_level, phase, model, chisq0, dchisq_floor
+    search_result = SearchResult(periods=periods,
+                                 chisq0=chisq0,
+                                 dchisq_dec=dchisq_dec,
+                                 dchisq_inc=dchisq_inc,
+                                 best_midpoint=best_midpoint,
+                                 best_duration=best_duration,
+                                 best_depth_scale=best_depth_scale,
+                                 best_flux_level=best_flux_level,
+                                 model_phase=model_phase,
+                                 model_flux=model_flux)
+
+    return search_result
 
 
 def main():
