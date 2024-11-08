@@ -211,6 +211,22 @@ def get_duration_grid(periods: np.ndarray,
     return bin_size, duration_grid
 
 
+def make_period_groups(periods, max_duty_cycle=0.15):
+
+    imin = 0
+    intervals = []
+    for i, period in enumerate(periods):
+        min_duration, max_duration = _get_duration_lims(period)
+        if max_duration/periods[imin] > max_duty_cycle:
+            intervals.append((imin, i))
+            imin = i
+
+    if imin != len(periods):
+        intervals.append((imin, len(periods)))
+
+    return intervals
+
+
 def _make_kernel(mid_times,
                  duration_grid,
                  transit_params,
@@ -514,7 +530,7 @@ def template_lstsq(time: np.ndarray,
                    min_bin_size: float = 1/(24*60),
                    max_bin_size: float = 5/(24*60),
                    oversampling: int = 3,
-                   block_size: int = 100,
+                   max_duty_cycle: float = 0.2,
                    num_processes: int = 1
                    ) -> SearchResult:
     """ Perform a transit search with templates.
@@ -527,6 +543,10 @@ def template_lstsq(time: np.ndarray,
     wdflux = weights*(flux - mean_flux)
     chisq0 = np.sum(weights*(flux - mean_flux)**2)
 
+    # Group the periods for re-computing the kernels.
+    periods = np.sort(periods)
+    intervals = make_period_groups(periods, max_duty_cycle=max_duty_cycle)
+
     # Set up variables for the output.
     dchisq_dec = np.zeros_like(periods)
     dchisq_inc = np.zeros_like(periods)
@@ -535,20 +555,20 @@ def template_lstsq(time: np.ndarray,
     best_duration = np.nan
     best_depth_scale = np.nan
     best_flux_level = np.nan
-    for i in range(0, len(periods), block_size):
+    for imin, imax in intervals:
 
         # Create a pool for multiprocessing.
         with mp.Pool(processes=num_processes) as pool:
 
             # Get the duration grid for the current period set.
-            bin_size, duration_grid = get_duration_grid(periods[i:i+block_size],
+            bin_size, duration_grid = get_duration_grid(periods[imin:imax],
                                                         exp_time=exp_time,
                                                         min_bin_size=min_bin_size,
                                                         max_bin_size=max_bin_size,
                                                         oversampling=oversampling)
 
             # Compute the template models for the current period set.
-            template_edges, template_models = make_template_grid(periods[i:i+block_size],
+            template_edges, template_models = make_template_grid(periods[imin:imax],
                                                                  duration_grid,
                                                                  bin_size,
                                                                  exp_time,
@@ -572,15 +592,15 @@ def template_lstsq(time: np.ndarray,
 
             # Do period searches.
             j = 0
-            for result in pool.imap(params, periods[i:i+block_size]):
+            for result in pool.imap(params, periods[imin:imax]):
 
                 # Update the results.
-                dchisq_dec[i+j] = result[0]
-                dchisq_inc[i+j] = result[1]
+                dchisq_dec[imin+j] = result[0]
+                dchisq_inc[imin+j] = result[1]
 
-                if np.all(dchisq_dec[0:i+j] < dchisq_dec[i+j]):
+                if np.all(dchisq_dec[0:imin+j] < dchisq_dec[imin+j]):
                     best_template_idx = result[2]
-                    best_period = periods[i+j]
+                    best_period = periods[imin+j]
                     best_midpoint = result[3]
                     best_duration = duration_grid[best_template_idx]
                     best_depth_scale = result[4]
