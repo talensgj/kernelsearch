@@ -163,7 +163,8 @@ def _get_bin_size(min_duration,
 def _duration_grid(min_duration: float,
                    max_duration: float,
                    ref_period: float,
-                   ref_depth: float = 0.005):
+                   ref_depth: float = 0.005,
+                   oversampling: float = 4):
 
     duration = min_duration
     duration_grid = [min_duration]
@@ -176,7 +177,9 @@ def _duration_grid(min_duration: float,
                                 ref_period,
                                 np.sqrt(ref_depth),
                                 0., 0., 90.)
-        duration_step = (duration - full) / 4  # Increment by 1/2 of the previous transits egress.
+
+        # Increment by fractions of the previous transits ingress/egress.
+        duration_step = (duration - full) / oversampling
         duration = duration + duration_step
         duration_grid.append(duration)
 
@@ -190,7 +193,8 @@ def get_duration_grid(periods: np.ndarray,
                       exp_time: Optional[float] = None,
                       min_bin_size: float = 1/(24*60),  # TODO are these good values?
                       max_bin_size: float = 5/(24*60),  # TODO are these good values?
-                      oversampling: int = 3):
+                      oversampling_epoch: int = 3,
+                      oversampling_duration: float = 4):
 
     ref_period = np.amax(periods)
     min_duration, max_duration = get_duration_lims(periods)
@@ -201,12 +205,13 @@ def get_duration_grid(periods: np.ndarray,
                              exp_time=exp_time,
                              min_bin_size=min_bin_size,
                              max_bin_size=max_bin_size,
-                             oversampling=oversampling)
+                             oversampling=oversampling_epoch)
 
     duration_grid = _duration_grid(min_duration,
                                    max_duration,
                                    ref_period,
-                                   ref_depth=ref_depth)
+                                   ref_depth=ref_depth,
+                                   oversampling=oversampling_duration)
 
     return bin_size, duration_grid
 
@@ -525,7 +530,8 @@ def template_lstsq(time: np.ndarray,
                    smooth_window: Optional[float] = None,
                    min_bin_size: float = 1/(24*60),
                    max_bin_size: float = 5/(24*60),
-                   oversampling: int = 3,
+                   oversampling_epoch: int = 3,
+                   oversampling_duration: float = 4,
                    max_duty_cycle: float = 0.2,
                    num_processes: int = 1
                    ) -> SearchResult:
@@ -561,7 +567,8 @@ def template_lstsq(time: np.ndarray,
                                                         exp_time=exp_time,
                                                         min_bin_size=min_bin_size,
                                                         max_bin_size=max_bin_size,
-                                                        oversampling=oversampling)
+                                                        oversampling_epoch=oversampling_epoch,
+                                                        oversampling_duration=oversampling_duration)
 
             # Compute the template models for the current period set.
             template_edges, template_models = make_template_grid(periods[imin:imax],
