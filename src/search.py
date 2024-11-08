@@ -278,8 +278,6 @@ def _make_smooth_kernel(mid_times,
     if nevals % 2 == 0:
         nevals += 1
 
-    kernel = np.ones(nevals)/nevals
-
     mid_idx = nevals // 2
     dt = (np.arange(nevals) - mid_idx) * exp_cadence
 
@@ -320,9 +318,7 @@ def _make_smooth_kernel(mid_times,
                                                    max_err=1.)
 
             flux_dt = result[0]
-            trend_dt = np.convolve(flux_dt, kernel, mode='valid')
-
-            template_models[row_idx, col_idx] = flux_dt[mid_idx]/trend_dt
+            template_models[row_idx, col_idx] = flux_dt[mid_idx]/np.mean(flux_dt)
             
     return template_models
 
