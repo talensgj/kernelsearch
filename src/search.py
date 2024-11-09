@@ -423,40 +423,25 @@ def search_period(period,
     b_bin[num_bins:] = b_bin[:ncols-1]
     bin_edges = np.append(bin_edges, bin_edges[1:ncols] + 1)
 
-    # Initialize some arrays.
-    dchisq = np.zeros((nrows, num_bins))
-    flux_level = np.zeros((nrows, num_bins))
-    depth_scale = np.zeros((nrows, num_bins))
-    for temp_idx in range(nrows):
+    # Perform convolutions.
+    a_bin = a_bin.reshape((1, -1))
+    b_bin = b_bin.reshape((1, -1))
+    alpha = signal.oaconvolve(b_bin, template_models, mode='valid')
+    beta = signal.oaconvolve(a_bin, template_square, mode='valid')
+    gamma = signal.oaconvolve(a_bin, template_models, mode='valid')
 
-        # Takes ~200 ms per hit.
-        # alpha = np.correlate(b_bin, template_models[temp_idx], mode='valid')
-        # beta = np.correlate(a_bin, template_square[temp_idx], mode='valid')
-        # gamma = np.correlate(a_bin, template_models[temp_idx], mode='valid')
+    # Compute depth and mask data gaps.
+    depth_scale = sum_weights * alpha / (sum_weights * beta - gamma ** 2)
+    mask = ~np.isfinite(depth_scale)
+    depth_scale[mask] = 0
 
-        # Takes ~200 ms per hit.
-        alpha = signal.correlate(b_bin, template_models[temp_idx], mode='valid', method='direct')
-        beta = signal.correlate(a_bin, template_square[temp_idx], mode='valid', method='direct')
-        gamma = signal.correlate(a_bin, template_models[temp_idx], mode='valid', method='direct')
+    # Compute the flux level.
+    flux_level = mean_flux - depth_scale * gamma / sum_weights
 
-        # Takes ~120 ms per hit, but gives bad peaks when there are gaps.
-        # alpha = signal.correlate(b_bin, template_models[temp_idx], mode='valid', method='fft')
-        # beta = signal.correlate(a_bin, template_square[temp_idx], mode='valid', method='fft')
-        # gamma = signal.correlate(a_bin, template_models[temp_idx], mode='valid', method='fft')
+    # Compute the delta chi-square.
+    dchisq = alpha * depth_scale
 
-        # Compute the depth scaling and remove bad values.
-        depth_scale_ = sum_weights*alpha/(sum_weights*beta - gamma**2)
-        mask = ~np.isfinite(depth_scale_)
-        depth_scale_[mask] = 0
-        depth_scale[temp_idx] = depth_scale_
-
-        # Compute the flux level.
-        flux_level[temp_idx] = mean_flux - depth_scale_ * gamma / sum_weights
-
-        # Compute the delta chi-square.
-        dchisq[temp_idx] = alpha*depth_scale_
-
-    # Compute a minimum dchisq by looking at the brightenings.
+    # Compute a minimum dchisq by considering flux increases.
     select_inc = depth_scale < 0
     if np.any(select_inc):
         dchisq_inc = np.amax(dchisq[select_inc])
@@ -490,7 +475,7 @@ def search_period(period,
         plt.tight_layout()
         plt.show()
 
-    # Remove models that correspond to brightenings.
+    # Remove models that correspond to flux increases
     dchisq[select_inc] = 0
 
     # Find the peak dchisq and store the best fit parameters.
