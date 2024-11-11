@@ -242,6 +242,7 @@ def _make_kernel(mid_times,
     
     nrows = len(duration_grid)
     ncols = len(mid_times)
+    template_count = np.zeros((nrows, ncols))
     template_models = np.zeros((nrows, ncols))
     for row_idx, duration in enumerate(duration_grid):
         
@@ -257,6 +258,16 @@ def _make_kernel(mid_times,
         # Evaluate the transit model.
         result = models.analytic_transit_model(mid_times,
                                                transit_params,
+                                               'uniform',
+                                               [],
+                                               exp_time=exp_time,
+                                               supersample_factor=supersample_factor,
+                                               max_err=1.)
+        template_count[row_idx] = result[0]
+
+        # Evaluate the transit model.
+        result = models.analytic_transit_model(mid_times,
+                                               transit_params,
                                                ld_type,
                                                ld_pars,
                                                exp_time=exp_time,
@@ -265,7 +276,7 @@ def _make_kernel(mid_times,
         
         template_models[row_idx] = result[0]
         
-    return template_models
+    return template_models, template_count
         
         
 def _make_smooth_kernel(mid_times,
@@ -288,8 +299,8 @@ def _make_smooth_kernel(mid_times,
 
     nrows = len(duration_grid)
     ncols = len(mid_times)
+    template_count = np.zeros((nrows, ncols))
     template_models = np.zeros((nrows, ncols))
-    template_models[:, :] = np.nan
     for row_idx, duration in enumerate(duration_grid):
 
         # Compute the scaled semi-major axis that gives the required duration.
@@ -300,6 +311,16 @@ def _make_smooth_kernel(mid_times,
                                     transit_params['ecc'],
                                     transit_params['w'])
         transit_params['a/R_s'] = axis
+
+        # Evaluate the transit model.
+        result = models.analytic_transit_model(mid_times,
+                                               transit_params,
+                                               'uniform',
+                                               [],
+                                               exp_time=exp_time,
+                                               supersample_factor=supersample_factor,
+                                               max_err=1.)
+        template_count[row_idx] = result[0]
 
         result = models.analytic_transit_model(mid_times,
                                                transit_params,
@@ -325,7 +346,7 @@ def _make_smooth_kernel(mid_times,
             flux_dt = result[0]
             template_models[row_idx, col_idx] = flux_dt[mid_idx]/np.mean(flux_dt)
             
-    return template_models
+    return template_models, template_count
 
 
 def make_template_grid(periods: np.ndarray,
@@ -338,7 +359,7 @@ def make_template_grid(periods: np.ndarray,
                        ref_depth: float = 0.005,
                        smooth_method: str = 'mean',
                        smooth_window: Optional[float] = None
-                       ) -> tuple[np.ndarray, np.ndarray]:
+                       ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     supersample_factor = np.ceil(exp_time*SECINDAY/10.).astype('int')
 
@@ -371,28 +392,29 @@ def make_template_grid(periods: np.ndarray,
     transit_params['Omega'] = 0.
 
     if smooth_window is None:
-        template_models = _make_kernel(mid_times,
-                                       duration_grid,
-                                       transit_params,
-                                       supersample_factor,
-                                       ld_type,
-                                       ld_pars,
-                                       exp_time)
+        template_models, template_count = _make_kernel(mid_times,
+                                                       duration_grid,
+                                                       transit_params,
+                                                       supersample_factor,
+                                                       ld_type,
+                                                       ld_pars,
+                                                       exp_time)
     else:
-        template_models = _make_smooth_kernel(mid_times,
-                                              duration_grid,
-                                              transit_params,
-                                              supersample_factor,
-                                              ld_type,
-                                              ld_pars,
-                                              exp_time,
-                                              exp_cadence,
-                                              smooth_method,
-                                              smooth_window)
+        template_models, template_count = _make_smooth_kernel(mid_times,
+                                                              duration_grid,
+                                                              transit_params,
+                                                              supersample_factor,
+                                                              ld_type,
+                                                              ld_pars,
+                                                              exp_time,
+                                                              exp_cadence,
+                                                              smooth_method,
+                                                              smooth_window)
 
+    template_count = (1 - template_count) > 0
     template_models = template_models - 1
 
-    return template_edges, template_models
+    return template_edges, template_models, template_count
 
 
 def search_period(period,
@@ -404,35 +426,66 @@ def search_period(period,
                   bin_size,
                   template_models,
                   template_square,
+                  template_count,
+                  min_points,
                   debug=False
                   ):
 
+    # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
 
+    # Phase fold the data.
     phase = np.mod(time/period, 1)
+
+    # Create the phase bins.
     num_bins = np.ceil(period/bin_size).astype('int')
     bin_edges = np.linspace(0, 1, num_bins + 1)
+
+    # Compute 'binned' quantities.
+    # This is not a binning of the lightcurve, instead it is a nearest neighbour
+    # interpolation into the template models.
     bin_idx = np.searchsorted(bin_edges, phase)
+    count = np.bincount(bin_idx, minlength=num_bins + 2 + ncols - 1)
     a_bin = np.bincount(bin_idx, weights=weights, minlength=num_bins + 2 + ncols - 1)
     b_bin = np.bincount(bin_idx, weights=wdflux, minlength=num_bins + 2 + ncols - 1)
+
+    # Remove out of bounds bins added by bincount.
+    count = count[1:-1]
     a_bin = a_bin[1:-1]
     b_bin = b_bin[1:-1]
 
-    # Extend arrays.
+    # Extend arrays to allow for all epochs.
+    count[num_bins:] = count[:ncols-1]
     a_bin[num_bins:] = a_bin[:ncols-1]
     b_bin[num_bins:] = b_bin[:ncols-1]
     bin_edges = np.append(bin_edges, bin_edges[1:ncols] + 1)
 
-    # Perform convolutions.
+    # Reshape arrays to work with scipy.signal.oaconvolve.
+    count = count.reshape((1, -1))
     a_bin = a_bin.reshape((1, -1))
     b_bin = b_bin.reshape((1, -1))
+
+    # Perform convolutions.
+    npoints = signal.oaconvolve(count, template_count, mode='valid')
     alpha = signal.oaconvolve(b_bin, template_models, mode='valid')
     beta = signal.oaconvolve(a_bin, template_square, mode='valid')
     gamma = signal.oaconvolve(a_bin, template_models, mode='valid')
 
-    # Compute depth and mask data gaps.
-    depth_scale = sum_weights * alpha / (sum_weights * beta - gamma ** 2)
-    mask = ~np.isfinite(depth_scale)
+    # Ignore division errors caused by an absence of in-transit data.
+    # The invalid values are handled below.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        # Compute transit depth scale factor.
+        depth_scale = sum_weights * alpha / (sum_weights * beta - gamma ** 2)
+
+    # Handle epoch/duration combinations with few or no in-transit points.
+    # All elements of min_points must be >=1.
+    min_points = np.maximum(min_points, 1)
+
+    if np.isscalar(min_points):
+        mask = npoints < min_points
+    else:
+        mask = npoints < min_points[:, np.newaxis]
+
     depth_scale[mask] = 0
 
     # Compute the flux level.
@@ -475,7 +528,7 @@ def search_period(period,
         plt.tight_layout()
         plt.show()
 
-    # Remove models that correspond to flux increases
+    # Remove models that correspond to flux increases.
     dchisq[select_inc] = 0
 
     # Find the peak dchisq and store the best fit parameters.
@@ -556,15 +609,15 @@ def template_lstsq(time: np.ndarray,
                                                         oversampling_duration=oversampling_duration)
 
             # Compute the template models for the current period set.
-            template_edges, template_models = make_template_grid(periods[imin:imax],
-                                                                 duration_grid,
-                                                                 bin_size,
-                                                                 exp_time,
-                                                                 exp_cadence,
-                                                                 ld_type=ld_type,
-                                                                 ld_pars=ld_pars,
-                                                                 smooth_method=smooth_method,
-                                                                 smooth_window=smooth_window)
+            template_edges, template_models, template_count = make_template_grid(periods[imin:imax],
+                                                                                 duration_grid,
+                                                                                 bin_size,
+                                                                                 exp_time,
+                                                                                 exp_cadence,
+                                                                                 ld_type=ld_type,
+                                                                                 ld_pars=ld_pars,
+                                                                                 smooth_method=smooth_method,
+                                                                                 smooth_window=smooth_window)
             template_square = template_models**2
 
             # Set up muliprocessed period searches.
@@ -576,7 +629,9 @@ def template_lstsq(time: np.ndarray,
                              sum_weights=sum_weights,
                              bin_size=bin_size,
                              template_models=template_models,
-                             template_square=template_square)
+                             template_square=template_square,
+                             template_count=template_count,
+                             min_points=0.5*duration_grid/exp_cadence)
 
             # Do period searches.
             j = 0
