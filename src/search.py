@@ -419,10 +419,10 @@ def make_template_grid(periods: np.ndarray,
 
 def search_period(period,
                   time,
-                  wdflux,
-                  weights,
-                  mean_flux,
-                  sum_weights,
+                  weights_norm,
+                  delta_flux_weighted,
+                  weights_sum,
+                  flux_mean,
                   bin_size,
                   template_models,
                   template_square,
@@ -446,8 +446,8 @@ def search_period(period,
     # interpolation into the template models.
     bin_idx = np.searchsorted(bin_edges, phase)
     count = np.bincount(bin_idx, minlength=num_bins + 2 + ncols - 1)
-    a_bin = np.bincount(bin_idx, weights=weights, minlength=num_bins + 2 + ncols - 1)
-    b_bin = np.bincount(bin_idx, weights=wdflux, minlength=num_bins + 2 + ncols - 1)
+    a_bin = np.bincount(bin_idx, weights=weights_norm, minlength=num_bins + 2 + ncols - 1)
+    b_bin = np.bincount(bin_idx, weights=delta_flux_weighted, minlength=num_bins + 2 + ncols - 1)
 
     # Remove out of bounds bins added by bincount.
     count = count[1:-1]
@@ -475,7 +475,7 @@ def search_period(period,
     # The invalid values are handled below.
     with np.errstate(divide='ignore', invalid='ignore'):
         # Compute transit depth scale factor.
-        depth_scale = sum_weights * alpha / (sum_weights * beta - gamma ** 2)
+        depth_scale = alpha / (beta - gamma ** 2)
 
     # Handle epoch/duration combinations with few or no in-transit points.
     # All elements of min_points must be >=1.
@@ -487,9 +487,6 @@ def search_period(period,
         mask = npoints < min_points[:, np.newaxis]
 
     depth_scale[mask] = 0
-
-    # Compute the flux level.
-    flux_level = mean_flux - depth_scale * gamma / sum_weights
 
     # Compute the delta chi-square.
     dchisq = alpha * depth_scale
@@ -504,24 +501,24 @@ def search_period(period,
     if debug:
         plt.figure(figsize=(8, 8))
 
-        plt.subplot(311)
-        vlim = np.amax(np.abs(dchisq - dchisq_inc))
-        plt.pcolormesh(dchisq - dchisq_inc, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        ax = plt.subplot(311)
+        tmp = weights_sum*(dchisq - dchisq_inc)
+        vlim = np.amax(np.abs(tmp))
+        plt.pcolormesh(tmp, vmin=-vlim, vmax=vlim, cmap='coolwarm')
         plt.colorbar(label=r'$\Delta \chi^2_{-} - \Delta \chi^2_{+}$')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
 
-        plt.subplot(312)
-        vlim = np.amax(np.abs(flux_level - 1))
-        plt.pcolormesh(flux_level - 1, vmin=-vlim, vmax=vlim, cmap='coolwarm')
-        plt.colorbar(label='flux level - 1')
-        plt.xlabel('Midpoint')
-        plt.ylabel('Duration')
-
-        plt.subplot(313)
+        plt.subplot(312, sharex=ax, sharey=ax)
         vlim = np.amax(np.abs(depth_scale))
         plt.pcolormesh(depth_scale, vmin=-vlim, vmax=vlim, cmap='coolwarm')
         plt.colorbar(label='depth scale')
+        plt.xlabel('Midpoint')
+        plt.ylabel('Duration')
+
+        plt.subplot(313, sharex=ax, sharey=ax)
+        plt.pcolormesh(npoints/min_points[:, np.newaxis], vmin=0, cmap='viridis')
+        plt.colorbar(label='npoints/min_points')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
 
@@ -537,7 +534,10 @@ def search_period(period,
     best_template_idx = irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
     best_depth_scale = depth_scale[irow, icol]
-    best_flux_level = flux_level[irow, icol]
+    best_flux_level = flux_mean - best_depth_scale * gamma[irow, icol]
+
+    dchisq_dec = weights_sum * dchisq_dec
+    dchisq_inc = weights_sum * dchisq_inc
 
     return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
 
@@ -554,6 +554,23 @@ SearchResult = namedtuple('lstsq_result',
                            'best_flux_level',
                            'model_phase',
                            'model_flux'])
+
+
+def _prepare_lightcurve(flux: np.ndarray,
+                        flux_err: np.ndarray
+                        ) -> tuple[np.ndarray, np.ndarray, float, float, float]:
+
+    # Compute normalized weights.
+    weights = 1 / flux_err ** 2
+    weights_sum = np.sum(weights)
+    weights_norm = weights/weights_sum
+
+    # Compute some quantities.
+    flux_mean = np.sum(weights_norm * flux)
+    delta_flux_weighted = weights_norm * (flux - flux_mean)
+    chisq0 = weights_sum * np.sum(weights_norm * (flux - flux_mean) ** 2)
+
+    return weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0
 
 
 def template_lstsq(time: np.ndarray,
@@ -577,11 +594,8 @@ def template_lstsq(time: np.ndarray,
     """
 
     # Pre-compute some arrays.
-    weights = 1/flux_err**2
-    sum_weights = np.sum(weights)
-    mean_flux = np.sum(weights*flux)/sum_weights
-    wdflux = weights*(flux - mean_flux)
-    chisq0 = np.sum(weights*(flux - mean_flux)**2)
+    result = _prepare_lightcurve(flux, flux_err)
+    weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
 
     # Group the periods for re-computing the kernels.
     periods = np.sort(periods)
@@ -623,10 +637,10 @@ def template_lstsq(time: np.ndarray,
             # Set up muliprocessed period searches.
             params = partial(search_period,
                              time=time,
-                             wdflux=wdflux,
-                             weights=weights,
-                             mean_flux=mean_flux,
-                             sum_weights=sum_weights,
+                             weights_norm=weights_norm,
+                             delta_flux_weighted=delta_flux_weighted,
+                             weights_sum=weights_sum,
+                             flux_mean=flux_mean,
                              bin_size=bin_size,
                              template_models=template_models,
                              template_square=template_square,
