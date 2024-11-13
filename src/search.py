@@ -93,18 +93,22 @@ def template_grid(period,
     return time_edges, flux_arr - 1, time_step
 
 
-def _get_duration_lims(period):
+def _get_duration_lims(period,
+                       R_star_min,
+                       R_star_max,
+                       M_star_min,
+                       M_star_max):
 
     max_duration = grid.T14(
-        R_s=tls_constants.R_STAR_MAX,
-        M_s=tls_constants.M_STAR_MAX,
+        R_s=R_star_max,
+        M_s=M_star_max,
         P=period,
         small=False  # large planet for long transit duration
     )
 
     min_duration = grid.T14(
-        R_s=tls_constants.R_STAR_MIN,
-        M_s=tls_constants.M_STAR_MIN,
+        R_s=R_star_min,
+        M_s=M_star_min,
         P=period,
         small=True  # small planet for short transit duration
     )
@@ -115,10 +119,14 @@ def _get_duration_lims(period):
     return min_duration, max_duration
 
 
-def get_duration_lims(periods):
+def get_duration_lims(periods,
+                      R_star_min,
+                      R_star_max,
+                      M_star_min,
+                      M_star_max):
 
-    min_duration0, max_duration0 = _get_duration_lims(np.amin(periods))
-    min_duration1, max_duration1 = _get_duration_lims(np.amax(periods))
+    min_duration0, max_duration0 = _get_duration_lims(np.amin(periods), R_star_min, R_star_max, M_star_min, M_star_max)
+    min_duration1, max_duration1 = _get_duration_lims(np.amax(periods), R_star_min, R_star_max, M_star_min, M_star_max)
 
     min_duration = np.minimum(min_duration0, min_duration1)
     max_duration = np.maximum(max_duration0, max_duration1)
@@ -189,6 +197,10 @@ def _duration_grid(min_duration: float,
 
 
 def get_duration_grid(periods: np.ndarray,
+                      R_star_min: float,
+                      R_star_max: float,
+                      M_star_min: float,
+                      M_star_max: float,
                       ref_depth: float = 0.005,
                       exp_time: Optional[float] = None,
                       min_bin_size: float = 1/(24*60),  # TODO are these good values?
@@ -197,7 +209,7 @@ def get_duration_grid(periods: np.ndarray,
                       oversampling_duration: float = 4):
 
     ref_period = np.amax(periods)
-    min_duration, max_duration = get_duration_lims(periods)
+    min_duration, max_duration = get_duration_lims(periods, R_star_min, R_star_max, M_star_min, M_star_max)
 
     bin_size = _get_bin_size(min_duration,
                              ref_period,
@@ -216,12 +228,17 @@ def get_duration_grid(periods: np.ndarray,
     return bin_size, duration_grid
 
 
-def make_period_groups(periods, max_duty_cycle=0.15):
+def make_period_groups(periods,
+                       R_star_min,
+                       R_star_max,
+                       M_star_min,
+                       M_star_max,
+                       max_duty_cycle=0.15):
 
     imin = 0
     intervals = []
     for i, period in enumerate(periods):
-        min_duration, max_duration = _get_duration_lims(period)
+        min_duration, max_duration = _get_duration_lims(period, R_star_min, R_star_max, M_star_min, M_star_max)
         if max_duration/periods[imin] > max_duty_cycle:
             intervals.append((imin, i))
             imin = i
@@ -579,6 +596,10 @@ def template_lstsq(time: np.ndarray,
                    periods: np.ndarray,
                    exp_time: float,
                    exp_cadence: float,
+                   R_star_min: float = tls_constants.R_STAR_MIN,
+                   R_star_max: float = tls_constants.R_STAR_MAX,
+                   M_star_min: float = tls_constants.M_STAR_MIN,
+                   M_star_max: float = tls_constants.M_STAR_MAX,
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
                    smooth_method: str = 'mean',
@@ -599,7 +620,12 @@ def template_lstsq(time: np.ndarray,
 
     # Group the periods for re-computing the kernels.
     periods = np.sort(periods)
-    intervals = make_period_groups(periods, max_duty_cycle=max_duty_cycle)
+    intervals = make_period_groups(periods,
+                                   R_star_min,
+                                   R_star_max,
+                                   M_star_min,
+                                   M_star_max,
+                                   max_duty_cycle=max_duty_cycle)
 
     # Set up variables for the output.
     dchisq_dec = np.zeros_like(periods)
@@ -616,6 +642,10 @@ def template_lstsq(time: np.ndarray,
 
             # Get the duration grid for the current period set.
             bin_size, duration_grid = get_duration_grid(periods[imin:imax],
+                                                        R_star_min,
+                                                        R_star_max,
+                                                        M_star_min,
+                                                        M_star_max,
                                                         exp_time=exp_time,
                                                         min_bin_size=min_bin_size,
                                                         max_bin_size=max_bin_size,
