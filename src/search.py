@@ -521,20 +521,19 @@ def _search_period(period,
     # Compute the delta chi-square.
     dchisq = alpha * depth_scale
 
-    # Compute a minimum dchisq by considering flux increases.
+    # Split delta chi-square by flux increaes and flux decreases.
+    # Use flux increases to establish a baseline.
     select_inc = depth_scale < 0
-    if np.any(select_inc):
-        dchisq_inc = np.amax(dchisq[select_inc])
-    else:
-        dchisq_inc = 0
+    dchisq_inc = np.where(select_inc, dchisq, 0)
+    dchisq_dec = np.where(select_inc, 0, dchisq)
+    dchisq_inc = np.amax(dchisq_inc, axis=1)
 
     if debug:
         plt.figure(figsize=(8, 8))
 
         ax = plt.subplot(311)
-        tmp = weights_sum*(dchisq - dchisq_inc)
-        vlim = np.amax(np.abs(tmp))
-        plt.pcolormesh(tmp, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        tmp = weights_sum*(dchisq_dec - dchisq_inc[:, np.newaxis])
+        plt.pcolormesh(tmp, cmap='viridis')
         plt.colorbar(label=r'$\Delta \chi^2_{-} - \Delta \chi^2_{+}$')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
@@ -555,12 +554,11 @@ def _search_period(period,
         plt.tight_layout()
         plt.show()
 
-    # Remove models that correspond to flux increases.
-    dchisq[select_inc] = 0
-
     # Find the peak dchisq and store the best fit parameters.
-    irow, icol = np.unravel_index(dchisq.argmax(), dchisq.shape)
-    dchisq_dec = dchisq[irow, icol]
+    irow, icol = np.unravel_index(dchisq_dec.argmax(), dchisq_dec.shape)
+    dchisq_dec = dchisq_dec[irow, icol]
+    dchisq_inc = dchisq_inc[irow]
+
     best_template_idx = irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
     best_depth_scale = depth_scale[irow, icol]
