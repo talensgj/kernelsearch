@@ -447,6 +447,19 @@ def search_period(period,
                   min_points,
                   debug=False
                   ):
+def _search_period(period,
+                   time,
+                   weights_norm,
+                   delta_flux_weighted,
+                   weights_sum,
+                   flux_mean,
+                   bin_size,
+                   template_models,
+                   template_square,
+                   template_count,
+                   min_points,
+                   debug=False
+                   ):
 
     # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
@@ -559,6 +572,56 @@ def search_period(period,
     return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
 
 
+def _search_periods(periods, **kwargs):
+    
+    npoints = len(periods)
+    dchisq_dec = np.zeros(npoints)
+    dchisq_inc = np.zeros(npoints)
+    best_template_idx = np.zeros(npoints, dtype='int')
+    best_midpoint = np.zeros(npoints)
+    best_depth_scale = np.zeros(npoints)
+    best_flux_level = np.zeros(npoints)
+
+    search_func = partial(_search_period, **kwargs)
+    for i, period in enumerate(periods):
+        result = search_func(period)
+        dchisq_dec[i] = result[0]
+        dchisq_inc[i] = result[1]
+        best_template_idx[i] = result[2]
+        best_midpoint[i] = result[3]
+        best_depth_scale[i] = result[4]
+        best_flux_level[i] = result[5]
+    
+    return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+
+
+def _search_periods_with_pool(num_processes, periods, **kwargs):
+    
+    npoints = len(periods)
+    dchisq_dec = np.zeros(npoints)
+    dchisq_inc = np.zeros(npoints)
+    best_template_idx = np.zeros(npoints, dtype='int')
+    best_midpoint = np.zeros(npoints)
+    best_depth_scale = np.zeros(npoints)
+    best_flux_level = np.zeros(npoints)
+    
+    search_func = partial(_search_periods, **kwargs)
+    with mp.Pool(processes=num_processes) as pool:
+        
+        i = 0
+        period_chunks = [periods[i::num_processes] for i in range(num_processes)]
+        for result in pool.imap(search_func, period_chunks):
+            dchisq_dec[i::num_processes] = result[0]
+            dchisq_inc[i::num_processes] = result[1]
+            best_template_idx[i::num_processes] = result[2]
+            best_midpoint[i::num_processes] = result[3]
+            best_depth_scale[i::num_processes] = result[4]
+            best_flux_level[i::num_processes] = result[5]
+            i += 1
+
+    return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+
+
 SearchResult = namedtuple('lstsq_result',
                           ['periods',
                            'chisq0',
@@ -637,65 +700,60 @@ def template_lstsq(time: np.ndarray,
     best_flux_level = np.nan
     for imin, imax in intervals:
 
-        # Create a pool for multiprocessing.
-        with mp.Pool(processes=num_processes) as pool:
+        # Get the duration grid for the current period set.
+        bin_size, duration_grid = get_duration_grid(periods[imin:imax],
+                                                    R_star_min,
+                                                    R_star_max,
+                                                    M_star_min,
+                                                    M_star_max,
+                                                    exp_time=exp_time,
+                                                    min_bin_size=min_bin_size,
+                                                    max_bin_size=max_bin_size,
+                                                    oversampling_epoch=oversampling_epoch,
+                                                    oversampling_duration=oversampling_duration)
 
-            # Get the duration grid for the current period set.
-            bin_size, duration_grid = get_duration_grid(periods[imin:imax],
-                                                        R_star_min,
-                                                        R_star_max,
-                                                        M_star_min,
-                                                        M_star_max,
-                                                        exp_time=exp_time,
-                                                        min_bin_size=min_bin_size,
-                                                        max_bin_size=max_bin_size,
-                                                        oversampling_epoch=oversampling_epoch,
-                                                        oversampling_duration=oversampling_duration)
+        # Compute the template models for the current period set.
+        template_edges, template_models, template_count = make_template_grid(periods[imin:imax],
+                                                                             duration_grid,
+                                                                             bin_size,
+                                                                             exp_time,
+                                                                             exp_cadence,
+                                                                             ld_type=ld_type,
+                                                                             ld_pars=ld_pars,
+                                                                             smooth_method=smooth_method,
+                                                                             smooth_window=smooth_window)
+        template_square = template_models**2
 
-            # Compute the template models for the current period set.
-            template_edges, template_models, template_count = make_template_grid(periods[imin:imax],
-                                                                                 duration_grid,
-                                                                                 bin_size,
-                                                                                 exp_time,
-                                                                                 exp_cadence,
-                                                                                 ld_type=ld_type,
-                                                                                 ld_pars=ld_pars,
-                                                                                 smooth_method=smooth_method,
-                                                                                 smooth_window=smooth_window)
-            template_square = template_models**2
+        kwargs = dict()
+        kwargs['time'] = time
+        kwargs['weights_norm'] = weights_norm
+        kwargs['delta_flux_weighted'] = delta_flux_weighted
+        kwargs['weights_sum'] = weights_sum
+        kwargs['flux_mean'] = flux_mean
+        kwargs['bin_size'] = bin_size
+        kwargs['template_models'] = template_models
+        kwargs['template_square'] = template_square
+        kwargs['template_count'] = template_count
+        kwargs['min_points'] = 0.5*duration_grid/exp_cadence
 
-            # Set up muliprocessed period searches.
-            params = partial(search_period,
-                             time=time,
-                             weights_norm=weights_norm,
-                             delta_flux_weighted=delta_flux_weighted,
-                             weights_sum=weights_sum,
-                             flux_mean=flux_mean,
-                             bin_size=bin_size,
-                             template_models=template_models,
-                             template_square=template_square,
-                             template_count=template_count,
-                             min_points=0.5*duration_grid/exp_cadence)
+        if num_processes is None:
+            result = _search_periods(periods[imin:imax], **kwargs)
+        else:
+            result = _search_periods_with_pool(num_processes, periods[imin:imax], **kwargs)
 
-            # Do period searches.
-            j = 0
-            for result in pool.imap(params, periods[imin:imax]):
+        dchisq_dec[imin:imax] = result[0]
+        dchisq_inc[imin:imax] = result[1]
 
-                # Update the results.
-                dchisq_dec[imin+j] = result[0]
-                dchisq_inc[imin+j] = result[1]
-
-                if np.all(dchisq_dec[0:imin+j] < dchisq_dec[imin+j]):
-                    best_template_idx = result[2]
-                    best_period = periods[imin+j]
-                    best_midpoint = result[3]
-                    best_duration = duration_grid[best_template_idx]
-                    best_depth_scale = result[4]
-                    best_flux_level = result[5]
-                    best_template_edges = template_edges
-                    best_template_model = template_models[best_template_idx]
-
-                j += 1
+        ipeak = np.argmax(dchisq_dec[0:imax])
+        if ipeak >= imin:
+            best_template_idx = result[2][ipeak - imin]
+            best_period = periods[ipeak]
+            best_midpoint = result[3][ipeak - imin]
+            best_duration = duration_grid[best_template_idx]
+            best_depth_scale = result[4][ipeak - imin]
+            best_flux_level = result[5][ipeak - imin]
+            best_template_edges = template_edges
+            best_template_model = template_models[best_template_idx]
 
     # Return the template model for the highest peak.
     model_phase, model_flux = evaluate_template(time,
