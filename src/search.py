@@ -441,12 +441,26 @@ def _search_period(period,
                    flux_mean,
                    chisq0,
                    bin_size,
+                   star_kwargs,
+                   duration_grid,
                    template_models,
                    template_square,
                    template_count,
                    min_points,
                    debug=False
                    ):
+
+    # Select the durations that encompass the required range at this period.
+    min_duration, max_duration = _get_duration_lims(period, **star_kwargs)
+    imin = np.searchsorted(duration_grid, min_duration)
+    imax = np.searchsorted(duration_grid, max_duration)
+    imin = np.maximum(imin - 1, 0)
+    imax = np.minimum(imax, len(duration_grid))
+
+    template_models = template_models[imin:imax]
+    template_square = template_square[imin:imax]
+    template_count = template_count[imin:imax]
+    min_points = min_points[imin:imax]
 
     # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
@@ -724,6 +738,11 @@ def template_lstsq(time: np.ndarray,
         kwargs['flux_mean'] = flux_mean
         kwargs['chisq0'] = chisq0
         kwargs['bin_size'] = bin_size
+        kwargs['star_kwargs'] = {'R_star_min': R_star_min,
+                                 'R_star_max': R_star_max,
+                                 'M_star_min': M_star_min,
+                                 'M_star_max': M_star_max}
+        kwargs['duration_grid'] = duration_grid
         kwargs['template_models'] = template_models
         kwargs['template_square'] = template_square
         kwargs['template_count'] = template_count
