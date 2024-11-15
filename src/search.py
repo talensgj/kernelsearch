@@ -1,15 +1,15 @@
 from typing import Optional
-from collections import namedtuple
-import multiprocessing as mp
 from functools import partial
+from collections import namedtuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal
-
-from transitleastsquares import grid, tls_constants
+import multiprocessing as mp
 
 from . import models
+from transitleastsquares import grid, tls_constants
+
+import matplotlib.pyplot as plt
 
 SECINDAY = 24*3600
 
