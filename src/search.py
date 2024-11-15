@@ -434,25 +434,12 @@ def make_template_grid(periods: np.ndarray,
     return template_edges, template_models, template_count
 
 
-def search_period(period,
-                  time,
-                  weights_norm,
-                  delta_flux_weighted,
-                  weights_sum,
-                  flux_mean,
-                  bin_size,
-                  template_models,
-                  template_square,
-                  template_count,
-                  min_points,
-                  debug=False
-                  ):
 def _search_period(period,
                    time,
                    weights_norm,
                    delta_flux_weighted,
-                   weights_sum,
                    flux_mean,
+                   chisq0,
                    bin_size,
                    template_models,
                    template_square,
@@ -528,13 +515,16 @@ def _search_period(period,
     dchisq_dec = np.where(select_inc, 0, dchisq)
     dchisq_inc = np.amax(dchisq_inc, axis=1)
 
+    # Compute the power spectrum.
+    power = (dchisq_dec - dchisq_inc[:, np.newaxis])/(chisq0 - dchisq_inc[:, np.newaxis])
+
     if debug:
         plt.figure(figsize=(8, 8))
 
         ax = plt.subplot(311)
-        tmp = weights_sum*(dchisq_dec - dchisq_inc[:, np.newaxis])
-        plt.pcolormesh(tmp, cmap='viridis')
-        plt.colorbar(label=r'$\Delta \chi^2_{-} - \Delta \chi^2_{+}$')
+        vlim = np.amax(np.abs(power))
+        plt.pcolormesh(power, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        plt.colorbar(label='power')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
 
@@ -554,25 +544,25 @@ def _search_period(period,
         plt.tight_layout()
         plt.show()
 
-    # Find the peak dchisq and store the best fit parameters.
-    irow, icol = np.unravel_index(dchisq_dec.argmax(), dchisq_dec.shape)
+    # Find the peak in the power, and associated dchisq values.
+    irow, icol = np.unravel_index(power.argmax(), power.shape)
+    power = power[irow, icol]
     dchisq_dec = dchisq_dec[irow, icol]
     dchisq_inc = dchisq_inc[irow]
 
-    best_template_idx = irow
+    # Store the parameters corresponding to peak power.
+    best_template_idx = imin + irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
     best_depth_scale = depth_scale[irow, icol]
     best_flux_level = flux_mean - best_depth_scale * gamma[irow, icol]
 
-    dchisq_dec = weights_sum * dchisq_dec
-    dchisq_inc = weights_sum * dchisq_inc
-
-    return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
 
 
 def _search_periods(periods, **kwargs):
     
     npoints = len(periods)
+    power = np.zeros(npoints)
     dchisq_dec = np.zeros(npoints)
     dchisq_inc = np.zeros(npoints)
     best_template_idx = np.zeros(npoints, dtype='int')
@@ -583,19 +573,21 @@ def _search_periods(periods, **kwargs):
     search_func = partial(_search_period, **kwargs)
     for i, period in enumerate(periods):
         result = search_func(period)
-        dchisq_dec[i] = result[0]
-        dchisq_inc[i] = result[1]
-        best_template_idx[i] = result[2]
-        best_midpoint[i] = result[3]
-        best_depth_scale[i] = result[4]
-        best_flux_level[i] = result[5]
+        power[i] = result[0]
+        dchisq_dec[i] = result[1]
+        dchisq_inc[i] = result[2]
+        best_template_idx[i] = result[3]
+        best_midpoint[i] = result[4]
+        best_depth_scale[i] = result[5]
+        best_flux_level[i] = result[6]
     
-    return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
 
 
 def _search_periods_with_pool(num_processes, periods, **kwargs):
     
     npoints = len(periods)
+    power = np.zeros(npoints)
     dchisq_dec = np.zeros(npoints)
     dchisq_inc = np.zeros(npoints)
     best_template_idx = np.zeros(npoints, dtype='int')
@@ -609,19 +601,21 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
         i = 0
         period_chunks = [periods[i::num_processes] for i in range(num_processes)]
         for result in pool.imap(search_func, period_chunks):
-            dchisq_dec[i::num_processes] = result[0]
-            dchisq_inc[i::num_processes] = result[1]
-            best_template_idx[i::num_processes] = result[2]
-            best_midpoint[i::num_processes] = result[3]
-            best_depth_scale[i::num_processes] = result[4]
-            best_flux_level[i::num_processes] = result[5]
+            power[i::num_processes] = result[0]
+            dchisq_dec[i::num_processes] = result[1]
+            dchisq_inc[i::num_processes] = result[2]
+            best_template_idx[i::num_processes] = result[3]
+            best_midpoint[i::num_processes] = result[4]
+            best_depth_scale[i::num_processes] = result[5]
+            best_flux_level[i::num_processes] = result[6]
             i += 1
 
-    return dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
 
 
 SearchResult = namedtuple('lstsq_result',
                           ['periods',
+                           'power',
                            'chisq0',
                            'dchisq_dec',
                            'dchisq_inc',
@@ -646,7 +640,7 @@ def _prepare_lightcurve(flux: np.ndarray,
     # Compute some quantities.
     flux_mean = np.sum(weights_norm * flux)
     delta_flux_weighted = weights_norm * (flux - flux_mean)
-    chisq0 = weights_sum * np.sum(weights_norm * (flux - flux_mean) ** 2)
+    chisq0 = np.sum(weights_norm * (flux - flux_mean) ** 2)
 
     return weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0
 
@@ -689,6 +683,7 @@ def template_lstsq(time: np.ndarray,
                                    max_duty_cycle=max_duty_cycle)
 
     # Set up variables for the output.
+    power = np.zeros_like(periods)
     dchisq_dec = np.zeros_like(periods)
     dchisq_inc = np.zeros_like(periods)
     best_period = np.nan
@@ -726,8 +721,8 @@ def template_lstsq(time: np.ndarray,
         kwargs['time'] = time
         kwargs['weights_norm'] = weights_norm
         kwargs['delta_flux_weighted'] = delta_flux_weighted
-        kwargs['weights_sum'] = weights_sum
         kwargs['flux_mean'] = flux_mean
+        kwargs['chisq0'] = chisq0
         kwargs['bin_size'] = bin_size
         kwargs['template_models'] = template_models
         kwargs['template_square'] = template_square
@@ -739,17 +734,18 @@ def template_lstsq(time: np.ndarray,
         else:
             result = _search_periods_with_pool(num_processes, periods[imin:imax], **kwargs)
 
-        dchisq_dec[imin:imax] = result[0]
-        dchisq_inc[imin:imax] = result[1]
+        power[imin:imax] = result[0]
+        dchisq_dec[imin:imax] = result[1]
+        dchisq_inc[imin:imax] = result[2]
 
-        ipeak = np.argmax(dchisq_dec[0:imax])
+        ipeak = np.argmax(power)
         if ipeak >= imin:
-            best_template_idx = result[2][ipeak - imin]
+            best_template_idx = result[3][ipeak - imin]
             best_period = periods[ipeak]
-            best_midpoint = result[3][ipeak - imin]
+            best_midpoint = result[4][ipeak - imin]
             best_duration = duration_grid[best_template_idx]
-            best_depth_scale = result[4][ipeak - imin]
-            best_flux_level = result[5][ipeak - imin]
+            best_depth_scale = result[5][ipeak - imin]
+            best_flux_level = result[6][ipeak - imin]
             best_template_edges = template_edges
             best_template_model = template_models[best_template_idx]
 
@@ -763,9 +759,10 @@ def template_lstsq(time: np.ndarray,
                                                 best_template_model)
 
     search_result = SearchResult(periods=periods,
-                                 chisq0=chisq0,
-                                 dchisq_dec=dchisq_dec,
-                                 dchisq_inc=dchisq_inc,
+                                 power=power,
+                                 chisq0=chisq0*weights_sum,
+                                 dchisq_dec=dchisq_dec*weights_sum,
+                                 dchisq_inc=dchisq_inc*weights_sum,
                                  best_period=best_period,
                                  best_midpoint=best_midpoint,
                                  best_duration=best_duration,
