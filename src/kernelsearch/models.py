@@ -314,4 +314,4 @@ def make_test_lightcurve(length: float,
     flux = result[0] + RNG.normal(size=npoints)*noise_ppm/1e6
     flux_err = np.ones_like(flux)*noise_ppm/1e6
 
-    return time, flux, flux_err
+    return time, flux, flux_err, result[0]

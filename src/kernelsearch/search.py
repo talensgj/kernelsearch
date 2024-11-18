@@ -6,7 +6,7 @@ import numpy as np
 from scipy import signal
 import multiprocessing as mp
 
-from . import models
+from kernelsearch import models
 from transitleastsquares import grid, tls_constants
 
 import matplotlib.pyplot as plt

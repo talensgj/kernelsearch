@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kernelsearch"
+version = "0.0.1"
+authors = [
+    { name = "Geert Jan Talens", email = "phys2523@ox.ac.uk" },
+    ]
+description = "A transit search algorithm."
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    ]
+dependencies = [
+    "numpy",
+    "scipy",
+    "wotan",
+    "astropy",
+    "batman-package",
+    "transitleastsquares",
+    "matplotlib",
+    ]
