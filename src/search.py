@@ -30,69 +30,6 @@ def evaluate_template(time,
     return phase, flux
 
 
-def template_grid(period,
-                  min_duration,
-                  max_duration,
-                  duration_step,
-                  impact_params=(0., 0.6, 0.85, 0.95)):
-
-    rp_rs = 0.05   # TODO hardcoded?
-
-    transit_params = dict()
-    transit_params['T_0'] = 0.
-    transit_params['P'] = period
-    transit_params['R_p/R_s'] = rp_rs
-    transit_params['a/R_s'] = 0.
-    transit_params['b'] = 0.
-    transit_params['ecc'] = 0.
-    transit_params['w'] = 90.
-    transit_params['Omega'] = 0.
-
-    # Initial time-step.
-    time_step = 1/(12*24)  # TODO determine from ingress/egress duration.
-
-    # Adjust the time-step so it is a multiple of the period.
-    factor = period / time_step
-    time_step = period / np.ceil(factor)
-
-    # Adjust the duration values so the max duration is a multiple of the time-step.
-    factor = max_duration / time_step
-    factor = time_step * np.ceil(factor) / max_duration
-    max_duration = factor * max_duration
-    min_duration = factor * min_duration
-
-    counter = (max_duration/time_step).astype('int')
-    time_edges = np.linspace(-max_duration/2, max_duration/2, counter + 1)
-    time = (time_edges[:-1] + time_edges[1:])/2
-
-    flux_arr = []
-    counter = np.ceil((max_duration - min_duration)/duration_step).astype('int')
-    duration_vals = np.linspace(min_duration, max_duration, counter)
-    for duration in duration_vals:
-        for impact in impact_params:
-            axis = models.duration2axis(duration, period, rp_rs, impact, 0., 90.)
-            transit_params['a/R_s'] = axis
-            transit_params['b'] = impact
-
-            result = models.analytic_transit_model(time, transit_params, ld_type='linear', ld_pars=[0.6], max_err=1)
-            flux, nu, xp, yp, params, fac = result
-
-            flux_arr.append(flux)
-
-    flux_arr = np.row_stack(flux_arr)
-
-    # time_edges = np.append(np.append(-np.inf, time_edges), np.inf)
-    # flux_arr = np.column_stack([np.ones(len(flux_arr)), flux_arr, np.ones(len(flux_arr))])
-
-    # plt.plot(time, flux_arr[-1,1:-1])
-    # plt.show()
-    #
-    # plt.imshow(flux_arr)
-    # plt.show()
-
-    return time_edges, flux_arr - 1, time_step
-
-
 def _get_duration_lims(period,
                        R_star_min,
                        R_star_max,
