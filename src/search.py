@@ -683,12 +683,21 @@ def template_lstsq(time: np.ndarray,
     """ Perform a transit search with templates.
     """
 
+    # Make sure period gris is sorted.
+    periods = np.sort(periods)
+
+    # Discard short periods when using smoothed kernels.
+    # Computing smoothed kernels is hard when P ~ smooth_window.
+    if smooth_window is not None:
+        print(f"Warning: discarding periods less than 2 times the smoothing window: P < {2*smooth_window} days.")
+        mask = periods >= 2 * smooth_window
+        periods = periods[mask]
+
     # Pre-compute some arrays.
     result = _prepare_lightcurve(flux, flux_err)
     weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
 
     # Group the periods for re-computing the kernels.
-    periods = np.sort(periods)
     intervals = make_period_groups(periods,
                                    R_star_min,
                                    R_star_max,
