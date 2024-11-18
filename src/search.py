@@ -390,7 +390,7 @@ def make_template_grid(periods: np.ndarray,
     if smooth_window is None:
         delta_time = max_duration + exp_time
     else:
-        delta_time = max_duration + np.maximum(exp_time, smooth_window)
+        delta_time = max_duration + exp_time + smooth_window
 
     # Determine the times at which to evaluate the template.
     nbins = np.ceil(delta_time/bin_size).astype('int')
