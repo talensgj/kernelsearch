@@ -384,6 +384,7 @@ def _search_period(period,
                    template_square,
                    template_count,
                    min_points,
+                   normalisation,
                    debug=False
                    ):
 
@@ -467,7 +468,10 @@ def _search_period(period,
     dchisq_inc = np.amax(dchisq_inc, axis=1)
 
     # Compute the power spectrum.
-    power = (dchisq_dec - dchisq_inc[:, np.newaxis])/(chisq0 - dchisq_inc[:, np.newaxis])
+    if normalisation == 'normal':
+        power = dchisq_dec/chisq0
+    else:
+        power = (dchisq_dec - dchisq_inc[:, np.newaxis])/(chisq0 - dchisq_inc[:, np.newaxis])
 
     if debug:
         plt.figure(figsize=(8, 8))
@@ -608,6 +612,7 @@ def template_lstsq(time: np.ndarray,
                    M_star_max: float = tls_constants.M_STAR_MAX,
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
+                   normalisation: str = 'normal',
                    smooth_method: str = 'mean',
                    smooth_window: Optional[float] = None,
                    min_bin_size: float = 1/(24*60),
@@ -619,6 +624,9 @@ def template_lstsq(time: np.ndarray,
                    ) -> SearchResult:
     """ Perform a transit search with templates.
     """
+
+    if normalisation not in ['normal', 'dec_minus_inc']:
+        raise ValueError(f"Unknown normalisation: {normalisation}.")
 
     # Make sure period gris is sorted.
     periods = np.sort(periods)
@@ -693,6 +701,7 @@ def template_lstsq(time: np.ndarray,
         kwargs['template_square'] = template_square
         kwargs['template_count'] = template_count
         kwargs['min_points'] = 0.5*duration_grid/exp_cadence
+        kwargs['normalisation'] = normalisation
 
         if num_processes is None:
             result = _search_periods(periods[imin:imax], **kwargs)
