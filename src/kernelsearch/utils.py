@@ -10,7 +10,7 @@ def bin_lightcurve(time: np.ndarray,
                    flux_err: np.ndarray,
                    bin_size: float = 12,
                    method: str = 'points'
-                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """ Re-bin lightcurve.
     """
 
@@ -25,25 +25,24 @@ def bin_lightcurve(time: np.ndarray,
 
     weights = 1/flux_err**2
 
-    val0 = np.bincount(bin_idx)
-    val1 = np.bincount(bin_idx, weights=time)
+    points = np.bincount(bin_idx)
+    time_sum = np.bincount(bin_idx, weights=time)
+    weights_sum = np.bincount(bin_idx, weights=weights)
+    weights_flux_sum = np.bincount(bin_idx, weights=weights*flux)
 
-    val2 = np.bincount(bin_idx, weights=weights)
-    val3 = np.bincount(bin_idx, weights=weights*flux)
+    mask = points > 0
+    points = points[mask]
+    time_sum = time_sum[mask]
+    weights_sum = weights_sum[mask]
+    weights_flux_sum = weights_flux_sum[mask]
 
-    mask = val0 > 0
-    val0 = val0[mask]
-    val1 = val1[mask]
-    val2 = val2[mask]
-    val3 = val3[mask]
-
-    time = val1/val0
-    flux = val3/val2
-    flux_err = np.sqrt(1/val2)
+    time = time_sum/points
+    flux = weights_flux_sum/weights_sum
+    flux_err = np.sqrt(1/weights_sum)
 
     # plt.plot(lc_data['time'][::10], lc_data['flux'][::10], '.')
     # plt.errorbar(time, flux, yerr=flux_err, ls='none')
     # plt.show()
     # plt.close()
 
-    return time, flux, flux_err
+    return time, flux, flux_err, points
