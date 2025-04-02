@@ -570,6 +570,9 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
 
 SearchResult = namedtuple('lstsq_result',
                           ['periods',
+                           'period_groups',
+                           'durations',
+                           'duration_groups',
                            'power',
                            'chisq0',
                            'dchisq_dec',
@@ -643,26 +646,24 @@ def template_lstsq(time: np.ndarray,
     weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
 
     # Group the periods for re-computing the kernels.
-    intervals = make_period_groups(periods,
-                                   R_star_min,
-                                   R_star_max,
-                                   M_star_min,
-                                   M_star_max,
-                                   max_duty_cycle=max_duty_cycle)
+    period_groups = make_period_groups(periods,
+                                       R_star_min,
+                                       R_star_max,
+                                       M_star_min,
+                                       M_star_max,
+                                       max_duty_cycle=max_duty_cycle)
 
-    # Set up variables for the output.
-    power = np.zeros_like(periods)
-    dchisq_dec = np.zeros_like(periods)
-    dchisq_inc = np.zeros_like(periods)
-    best_period = np.nan
-    best_midpoint = np.nan
-    best_duration = np.nan
-    best_depth_scale = np.nan
-    best_flux_level = np.nan
-    for imin, imax in intervals:
+    ngroups = len(period_groups)
+    bin_sizes = np.zeros(ngroups)
+    durations = np.array([])
+    duration_groups = np.zeros_like(period_groups)
+    for group in range(ngroups):
 
-        # Get the duration grid for the current period set.
-        bin_size, duration_grid = get_duration_grid(periods[imin:imax],
+        imin, imax = period_groups[group]
+        period_grid = periods[imin:imax]
+
+        # Get the duration grid for the current period group.
+        bin_size, duration_grid = get_duration_grid(period_grid,
                                                     R_star_min,
                                                     R_star_max,
                                                     M_star_min,
@@ -673,8 +674,33 @@ def template_lstsq(time: np.ndarray,
                                                     oversampling_epoch=oversampling_epoch,
                                                     oversampling_duration=oversampling_duration)
 
+        bin_sizes[group] = bin_size
+        duration_groups[group, 0] = durations.size
+        durations = np.concatenate([durations, duration_grid])
+        duration_groups[group, 1] = durations.size
+
+    # Set up variables for the output.
+    power = np.zeros_like(periods)
+    dchisq_dec = np.zeros_like(periods)
+    dchisq_inc = np.zeros_like(periods)
+    best_period = np.nan
+    best_midpoint = np.nan
+    best_duration = np.nan
+    best_depth_scale = np.nan
+    best_flux_level = np.nan
+
+    for group in range(ngroups):
+
+        bin_size = bin_sizes[group]
+
+        imin, imax = period_groups[group]
+        period_grid = periods[imin:imax]
+
+        jmin, jmax = duration_groups[group]
+        duration_grid = durations[jmin:jmax]
+
         # Compute the template models for the current period set.
-        template_edges, template_models, template_count = make_template_grid(periods[imin:imax],
+        template_edges, template_models, template_count = make_template_grid(period_grid,
                                                                              duration_grid,
                                                                              bin_size,
                                                                              exp_time,
@@ -704,9 +730,9 @@ def template_lstsq(time: np.ndarray,
         kwargs['normalisation'] = normalisation
 
         if num_processes is None:
-            result = _search_periods(periods[imin:imax], **kwargs)
+            result = _search_periods(period_grid, **kwargs)
         else:
-            result = _search_periods_with_pool(num_processes, periods[imin:imax], **kwargs)
+            result = _search_periods_with_pool(num_processes, period_grid, **kwargs)
 
         power[imin:imax] = result[0]
         dchisq_dec[imin:imax] = result[1]
@@ -733,6 +759,9 @@ def template_lstsq(time: np.ndarray,
                                                 best_template_model)
 
     search_result = SearchResult(periods=periods,
+                                 period_groups=period_groups,
+                                 durations=durations,
+                                 duration_groups=duration_groups,
                                  power=power,
                                  chisq0=chisq0*weights_sum,
                                  dchisq_dec=dchisq_dec*weights_sum,
