@@ -620,7 +620,7 @@ def template_lstsq(time: np.ndarray,
                    oversampling_epoch: int = 3,
                    oversampling_duration: float = 4,
                    max_duty_cycle: float = 0.2,
-                   num_processes: int = 1
+                   num_processes: Optional[int] = None
                    ) -> SearchResult:
     """ Perform a transit search with templates.
     """
