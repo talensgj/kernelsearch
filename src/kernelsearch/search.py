@@ -241,8 +241,8 @@ def _make_smooth_kernel(mid_times,
                         ld_pars,
                         exp_time,
                         exp_cadence,
-                        smooth_method,
-                        smooth_window):
+                        smooth_window,
+                        smooth_weights):
 
     nevals = np.ceil(smooth_window / exp_cadence).astype('int')
     if nevals % 2 == 0:
@@ -250,6 +250,15 @@ def _make_smooth_kernel(mid_times,
 
     mid_idx = nevals // 2
     dt = (np.arange(nevals) - mid_idx) * exp_cadence
+
+    if smooth_weights == 'uniform':
+        weights = np.ones_like(dt)/len(dt)
+    elif smooth_weights == 'tricube':
+        radius = smooth_window/2
+        weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
+        weights = weights/np.sum(weights)
+    else:
+        raise ValueError(f"Invalid value '{smooth_weights}' for parameter 'smooth_weights'.")
 
     nrows = len(duration_grid)
     ncols = len(mid_times)
@@ -298,7 +307,7 @@ def _make_smooth_kernel(mid_times,
                                                    max_err=1.)
 
             flux_dt = result[0]
-            template_models[row_idx, col_idx] = flux_dt[mid_idx]/np.mean(flux_dt)
+            template_models[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
             
     return template_models, template_count
 
@@ -311,8 +320,8 @@ def make_template_grid(periods: np.ndarray,
                        ld_type: str = 'linear',
                        ld_pars: tuple = (0.6,),
                        ref_depth: float = 0.005,
-                       smooth_method: str = 'mean',
-                       smooth_window: Optional[float] = None
+                       smooth_window: Optional[float] = None,
+                       smooth_weights: str = 'uniform'
                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     supersample_factor = np.ceil(exp_time*SECINDAY/10.).astype('int')
@@ -362,8 +371,8 @@ def make_template_grid(periods: np.ndarray,
                                                               ld_pars,
                                                               exp_time,
                                                               exp_cadence,
-                                                              smooth_method,
-                                                              smooth_window)
+                                                              smooth_window,
+                                                              smooth_weights)
 
     template_count = (1 - template_count) > 0
     template_models = template_models - 1
@@ -616,10 +625,10 @@ def template_lstsq(time: np.ndarray,
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
                    normalisation: str = 'normal',
-                   smooth_method: str = 'mean',
                    smooth_window: Optional[float] = None,
-                   min_bin_size: float = 1/(24*60),
-                   max_bin_size: float = 5/(24*60),
+                   smooth_weights: str = 'uniform',
+                   min_bin_size: float = 1 / (24 * 60),
+                   max_bin_size: float = 5 / (24 * 60),
                    oversampling_epoch: int = 3,
                    oversampling_duration: float = 4,
                    max_duty_cycle: float = 0.2,
@@ -707,8 +716,8 @@ def template_lstsq(time: np.ndarray,
                                                                              exp_cadence,
                                                                              ld_type=ld_type,
                                                                              ld_pars=ld_pars,
-                                                                             smooth_method=smooth_method,
-                                                                             smooth_window=smooth_window)
+                                                                             smooth_window=smooth_window,
+                                                                             smooth_weights=smooth_weights)
         template_square = template_models**2
 
         kwargs = dict()
