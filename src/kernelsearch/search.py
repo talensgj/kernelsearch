@@ -199,6 +199,8 @@ def _make_transit_templates(mid_times: np.ndarray,
                             smooth_weights: str = 'uniform'):
 
     if search_mode == 'WLS':
+
+        # Create the grid of exposures inside the smoothing window.
         nevals = np.ceil(smooth_window / exp_cadence).astype('int')
         if nevals % 2 == 0:
             nevals += 1
@@ -206,14 +208,26 @@ def _make_transit_templates(mid_times: np.ndarray,
         mid_idx = nevals // 2
         dt = (np.arange(nevals) - mid_idx) * exp_cadence
 
+        # Compute the weights across the smoothing window.
         if smooth_weights == 'uniform':
-            weights = np.ones_like(dt)/len(dt)
+            weights = np.ones_like(dt)
         elif smooth_weights == 'tricube':
             radius = smooth_window/2
             weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
-            weights = weights/np.sum(weights)
         else:
             raise ValueError(f"Invalid value '{smooth_weights}' for parameter 'smooth_weights'.")
+
+        # Normalize the weights.
+        weights = weights/np.sum(weights)
+
+        # Make the dt and weights values 2D.
+        dt = dt[:, np.newaxis]
+        weights = weights[:, np.newaxis]
+
+        # Get the full array of transit times needed to compute warped transits.
+        dt = dt + mid_times[np.newaxis, :]
+        dt_shape = dt.shape
+        dt = dt.ravel()
 
     nrows = len(duration_grid)
     ncols = len(mid_times)
@@ -252,20 +266,20 @@ def _make_transit_templates(mid_times: np.ndarray,
         tls_template[row_idx] = result[0]
 
         if search_mode == 'WLS':
-            for col_idx, mid_time in enumerate(mid_times):
 
-                # Evaluate the transit model.
-                result = models.analytic_transit_model(mid_time + dt,
-                                                       transit_params,
-                                                       ld_type,
-                                                       ld_pars,
-                                                       exp_time=exp_time,
-                                                       supersample_factor=supersample_factor,
-                                                       fac=fac,
-                                                       max_err=1.)
+            # Evaluate the transit model.
+            result = models.analytic_transit_model(dt,
+                                                   transit_params,
+                                                   ld_type,
+                                                   ld_pars,
+                                                   exp_time=exp_time,
+                                                   supersample_factor=supersample_factor,
+                                                   fac=fac,
+                                                   max_err=1.)
 
-                flux_dt = result[0]
-                wls_template[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
+            flux_dt = result[0]
+            flux_dt = flux_dt.reshape(dt_shape)
+            wls_template[row_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt, axis=0)
             
     return bls_template, tls_template, wls_template
 
