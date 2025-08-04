@@ -291,6 +291,10 @@ def make_template_grid(periods: np.ndarray,
         errmsg = f"Parameter smooth_window can not be None for WLS search."
         raise ValueError(errmsg)
 
+    if smooth_weights not in ['uniform', 'tricube']:
+        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
+        raise ValueError(errmsg)
+
     if search_mode == 'WLS' and smooth_window/np.amin(periods) > 0.5:  # TODO improve on this.
         print("Warning: Cannot make WLS templates at short periods, defaulting to TLS templates.")
         search_mode = 'TLS'
@@ -617,6 +621,10 @@ def template_lstsq(time: np.ndarray,
 
     if normalisation not in ['normal', 'dec_minus_inc']:
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
+        raise ValueError(errmsg)
+
+    if smooth_weights not in ['uniform', 'tricube']:
+        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
     # Make sure period grid is sorted.
