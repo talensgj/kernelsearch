@@ -184,85 +184,41 @@ def make_period_groups(periods,
         intervals.append((imin, len(periods)))
 
     return intervals
+        
+        
+def _make_transit_templates(mid_times: np.ndarray,
+                            duration_grid: np.ndarray,
+                            transit_params: dict,
+                            supersample_factor: int,
+                            ld_type: str,
+                            ld_pars: tuple,
+                            exp_time: float,
+                            exp_cadence: float,
+                            search_mode: str = 'TLS',
+                            smooth_window: Optional[float] = None,
+                            smooth_weights: str = 'uniform'):
 
+    if search_mode == 'WLS':
+        nevals = np.ceil(smooth_window / exp_cadence).astype('int')
+        if nevals % 2 == 0:
+            nevals += 1
 
-def _make_kernel(mid_times,
-                 duration_grid,
-                 transit_params,
-                 supersample_factor,
-                 ld_type,
-                 ld_pars,
-                 exp_time):
-    
+        mid_idx = nevals // 2
+        dt = (np.arange(nevals) - mid_idx) * exp_cadence
+
+        if smooth_weights == 'uniform':
+            weights = np.ones_like(dt)/len(dt)
+        elif smooth_weights == 'tricube':
+            radius = smooth_window/2
+            weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
+            weights = weights/np.sum(weights)
+        else:
+            raise ValueError(f"Invalid value '{smooth_weights}' for parameter 'smooth_weights'.")
+
     nrows = len(duration_grid)
     ncols = len(mid_times)
     bls_template = np.zeros((nrows, ncols))
     tls_template = np.zeros((nrows, ncols))
-    for row_idx, duration in enumerate(duration_grid):
-        
-        # Compute the scaled semi-major axis that gives the required duration.
-        axis = models.duration2axis(duration,
-                                    transit_params['P'],
-                                    transit_params['R_p/R_s'],
-                                    transit_params['b'],
-                                    transit_params['ecc'],
-                                    transit_params['w'])
-        transit_params['a/R_s'] = axis
-
-        # Evaluate the transit model.
-        result = models.analytic_transit_model(mid_times,
-                                               transit_params,
-                                               'uniform',
-                                               [],
-                                               exp_time=exp_time,
-                                               supersample_factor=supersample_factor,
-                                               max_err=1.)
-        bls_template[row_idx] = result[0]
-
-        # Evaluate the transit model.
-        result = models.analytic_transit_model(mid_times,
-                                               transit_params,
-                                               ld_type,
-                                               ld_pars,
-                                               exp_time=exp_time,
-                                               supersample_factor=supersample_factor,
-                                               max_err=1.)
-        
-        tls_template[row_idx] = result[0]
-        
-    return bls_template, tls_template
-        
-        
-def _make_smooth_kernel(mid_times,
-                        duration_grid,
-                        transit_params,
-                        supersample_factor,
-                        ld_type,
-                        ld_pars,
-                        exp_time,
-                        exp_cadence,
-                        smooth_window,
-                        smooth_weights):
-
-    nevals = np.ceil(smooth_window / exp_cadence).astype('int')
-    if nevals % 2 == 0:
-        nevals += 1
-
-    mid_idx = nevals // 2
-    dt = (np.arange(nevals) - mid_idx) * exp_cadence
-
-    if smooth_weights == 'uniform':
-        weights = np.ones_like(dt)/len(dt)
-    elif smooth_weights == 'tricube':
-        radius = smooth_window/2
-        weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
-        weights = weights/np.sum(weights)
-    else:
-        raise ValueError(f"Invalid value '{smooth_weights}' for parameter 'smooth_weights'.")
-
-    nrows = len(duration_grid)
-    ncols = len(mid_times)
-    bls_template = np.zeros((nrows, ncols))
     wls_template = np.zeros((nrows, ncols))
     for row_idx, duration in enumerate(duration_grid):
 
@@ -293,23 +249,25 @@ def _make_smooth_kernel(mid_times,
                                                supersample_factor=supersample_factor,
                                                max_err=1.)
         fac = result[5]
+        tls_template[row_idx] = result[0]
 
-        for col_idx, mid_time in enumerate(mid_times):
+        if search_mode == 'WLS':
+            for col_idx, mid_time in enumerate(mid_times):
 
-            # Evaluate the transit model.
-            result = models.analytic_transit_model(mid_time + dt,
-                                                   transit_params,
-                                                   ld_type,
-                                                   ld_pars,
-                                                   exp_time=exp_time,
-                                                   supersample_factor=supersample_factor,
-                                                   fac=fac,
-                                                   max_err=1.)
+                # Evaluate the transit model.
+                result = models.analytic_transit_model(mid_time + dt,
+                                                       transit_params,
+                                                       ld_type,
+                                                       ld_pars,
+                                                       exp_time=exp_time,
+                                                       supersample_factor=supersample_factor,
+                                                       fac=fac,
+                                                       max_err=1.)
 
-            flux_dt = result[0]
-            wls_template[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
+                flux_dt = result[0]
+                wls_template[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
             
-    return bls_template, wls_template
+    return bls_template, tls_template, wls_template
 
 
 def make_template_grid(periods: np.ndarray,
@@ -363,26 +321,21 @@ def make_template_grid(periods: np.ndarray,
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    if search_mode in ['BLS', 'TLS']:
-        bls_template, tls_template = _make_kernel(mid_times,
-                                                  duration_grid,
-                                                  transit_params,
-                                                  supersample_factor,
-                                                  ld_type,
-                                                  ld_pars,
-                                                  exp_time)
-    else:
-        bls_template, wls_template = _make_smooth_kernel(mid_times,
-                                                         duration_grid,
-                                                         transit_params,
-                                                         supersample_factor,
-                                                         ld_type,
-                                                         ld_pars,
-                                                         exp_time,
-                                                         exp_cadence,
-                                                         smooth_window,
-                                                         smooth_weights)
+    # Compute the transit templates.
+    result = _make_transit_templates(mid_times,
+                                     duration_grid,
+                                     transit_params,
+                                     supersample_factor,
+                                     ld_type,
+                                     ld_pars,
+                                     exp_time,
+                                     exp_cadence,
+                                     search_mode=search_mode,
+                                     smooth_window=smooth_window,
+                                     smooth_weights=smooth_weights)
+    bls_template, tls_template, wls_template = result
 
+    # Choose the final template based on the search mode.
     if search_mode == 'BLS':
         template_models = (bls_template - 1)
     if search_mode == 'TLS':
