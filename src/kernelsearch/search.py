@@ -196,8 +196,8 @@ def _make_kernel(mid_times,
     
     nrows = len(duration_grid)
     ncols = len(mid_times)
-    template_count = np.zeros((nrows, ncols))
-    template_models = np.zeros((nrows, ncols))
+    bls_template = np.zeros((nrows, ncols))
+    tls_template = np.zeros((nrows, ncols))
     for row_idx, duration in enumerate(duration_grid):
         
         # Compute the scaled semi-major axis that gives the required duration.
@@ -217,7 +217,7 @@ def _make_kernel(mid_times,
                                                exp_time=exp_time,
                                                supersample_factor=supersample_factor,
                                                max_err=1.)
-        template_count[row_idx] = result[0]
+        bls_template[row_idx] = result[0]
 
         # Evaluate the transit model.
         result = models.analytic_transit_model(mid_times,
@@ -228,9 +228,9 @@ def _make_kernel(mid_times,
                                                supersample_factor=supersample_factor,
                                                max_err=1.)
         
-        template_models[row_idx] = result[0]
+        tls_template[row_idx] = result[0]
         
-    return template_models, template_count
+    return bls_template, tls_template
         
         
 def _make_smooth_kernel(mid_times,
@@ -262,8 +262,8 @@ def _make_smooth_kernel(mid_times,
 
     nrows = len(duration_grid)
     ncols = len(mid_times)
-    template_count = np.zeros((nrows, ncols))
-    template_models = np.zeros((nrows, ncols))
+    bls_template = np.zeros((nrows, ncols))
+    wls_template = np.zeros((nrows, ncols))
     for row_idx, duration in enumerate(duration_grid):
 
         # Compute the scaled semi-major axis that gives the required duration.
@@ -283,7 +283,7 @@ def _make_smooth_kernel(mid_times,
                                                exp_time=exp_time,
                                                supersample_factor=supersample_factor,
                                                max_err=1.)
-        template_count[row_idx] = result[0]
+        bls_template[row_idx] = result[0]
 
         result = models.analytic_transit_model(mid_times,
                                                transit_params,
@@ -307,9 +307,9 @@ def _make_smooth_kernel(mid_times,
                                                    max_err=1.)
 
             flux_dt = result[0]
-            template_models[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
+            wls_template[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
             
-    return template_models, template_count
+    return bls_template, wls_template
 
 
 def make_template_grid(periods: np.ndarray,
@@ -320,20 +320,29 @@ def make_template_grid(periods: np.ndarray,
                        ld_type: str = 'linear',
                        ld_pars: tuple = (0.6,),
                        ref_depth: float = 0.005,
+                       search_mode: str = 'TLS',
                        smooth_window: Optional[float] = None,
                        smooth_weights: str = 'uniform'
-                       ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                       ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
-    supersample_factor = np.ceil(exp_time*SECINDAY/10.).astype('int')
+    if search_mode not in ['BLS', 'TLS', 'WLS']:
+        errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
+        raise ValueError(errmsg)
 
-    if smooth_window is not None and smooth_window/np.amin(periods) > 0.5:  # TODO improve on this.
-        print('Warning: smooth_window too long for shortest period, ignoring...')
-        smooth_window = None
+    if search_mode == 'WLS' and smooth_window is None:
+        errmsg = f"Parameter smooth_window can not be None for WLS search."
+        raise ValueError(errmsg)
+
+    if search_mode == 'WLS' and smooth_window/np.amin(periods) > 0.5:  # TODO improve on this.
+        print("Warning: Cannot make WLS templates at short periods, defaulting to TLS templates.")
+        search_mode = 'TLS'
+
+    supersample_factor = np.ceil(exp_time * SECINDAY / 10.).astype('int')
 
     ref_period = np.amax(periods)
     max_duration = np.amax(duration_grid)
 
-    if smooth_window is None:
+    if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
     else:
         delta_time = max_duration + exp_time + smooth_window
@@ -354,30 +363,37 @@ def make_template_grid(periods: np.ndarray,
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    if smooth_window is None:
-        template_models, template_count = _make_kernel(mid_times,
-                                                       duration_grid,
-                                                       transit_params,
-                                                       supersample_factor,
-                                                       ld_type,
-                                                       ld_pars,
-                                                       exp_time)
+    if search_mode in ['BLS', 'TLS']:
+        bls_template, tls_template = _make_kernel(mid_times,
+                                                  duration_grid,
+                                                  transit_params,
+                                                  supersample_factor,
+                                                  ld_type,
+                                                  ld_pars,
+                                                  exp_time)
     else:
-        template_models, template_count = _make_smooth_kernel(mid_times,
-                                                              duration_grid,
-                                                              transit_params,
-                                                              supersample_factor,
-                                                              ld_type,
-                                                              ld_pars,
-                                                              exp_time,
-                                                              exp_cadence,
-                                                              smooth_window,
-                                                              smooth_weights)
+        bls_template, wls_template = _make_smooth_kernel(mid_times,
+                                                         duration_grid,
+                                                         transit_params,
+                                                         supersample_factor,
+                                                         ld_type,
+                                                         ld_pars,
+                                                         exp_time,
+                                                         exp_cadence,
+                                                         smooth_window,
+                                                         smooth_weights)
 
-    template_count = (1 - template_count) > 0
-    template_models = template_models - 1
+    if search_mode == 'BLS':
+        template_models = (bls_template - 1)
+    if search_mode == 'TLS':
+        template_models = (tls_template - 1)
+    if search_mode == 'WLS':
+        template_models = (wls_template - 1)
 
-    return template_edges, template_models, template_count
+    template_square = template_models ** 2
+    template_count = (bls_template - 1) < 0
+
+    return template_edges, template_models, template_square, template_count
 
 
 def _search_period(period,
@@ -624,6 +640,7 @@ def template_lstsq(time: np.ndarray,
                    M_star_max: float = tls_constants.M_STAR_MAX,
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
+                   search_mode: str = 'TLS',
                    normalisation: str = 'normal',
                    smooth_window: Optional[float] = None,
                    smooth_weights: str = 'uniform',
@@ -637,16 +654,25 @@ def template_lstsq(time: np.ndarray,
     """ Perform a transit search with templates.
     """
 
-    if normalisation not in ['normal', 'dec_minus_inc']:
-        raise ValueError(f"Unknown normalisation: {normalisation}.")
+    if search_mode not in ['BLS', 'TLS', 'WLS']:
+        errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
+        raise ValueError(errmsg)
 
-    # Make sure period gris is sorted.
+    if search_mode == 'WLS' and smooth_window is None:
+        errmsg = f"Parameter smooth_window can not be None for WLS search."
+        raise ValueError(errmsg)
+
+    if normalisation not in ['normal', 'dec_minus_inc']:
+        errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
+        raise ValueError(errmsg)
+
+    # Make sure period grid is sorted.
     periods = np.sort(periods)
 
     # Discard short periods when using smoothed kernels.
     # Computing smoothed kernels is hard when P ~ smooth_window.
-    if smooth_window is not None:
-        print(f"Warning: discarding periods less than 2 times the smoothing window: P < {2*smooth_window} days.")
+    if search_mode == 'WLS':
+        print(f"Warning: discarding periods less than 2 times the smoothing window for WLS search: P < {2*smooth_window} days.")
         mask = periods >= 2 * smooth_window
         periods = periods[mask]
 
@@ -709,16 +735,17 @@ def template_lstsq(time: np.ndarray,
         duration_grid = durations[jmin:jmax]
 
         # Compute the template models for the current period set.
-        template_edges, template_models, template_count = make_template_grid(period_grid,
-                                                                             duration_grid,
-                                                                             bin_size,
-                                                                             exp_time,
-                                                                             exp_cadence,
-                                                                             ld_type=ld_type,
-                                                                             ld_pars=ld_pars,
-                                                                             smooth_window=smooth_window,
-                                                                             smooth_weights=smooth_weights)
-        template_square = template_models**2
+        result = make_template_grid(period_grid,
+                                    duration_grid,
+                                    bin_size,
+                                    exp_time,
+                                    exp_cadence,
+                                    ld_type=ld_type,
+                                    ld_pars=ld_pars,
+                                    search_mode=search_mode,
+                                    smooth_window=smooth_window,
+                                    smooth_weights=smooth_weights)
+        template_edges, template_models, template_square, template_count = result
 
         kwargs = dict()
         kwargs['time'] = time
