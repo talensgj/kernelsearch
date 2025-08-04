@@ -178,8 +178,9 @@ def analytic_transit_model(time: np.ndarray,
                            exp_time: Optional[float] = None,
                            supersample_factor: Optional[int] = None,
                            fac: Optional[float] = None,
-                           max_err: float = 0.5
-                           ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, batman.TransitParams, float]:
+                           max_err: float = 0.5,
+                           return_orbit: bool = False
+                           ) -> tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], batman.TransitParams, float]:
     # TODO stricter max_err avoids convergence issue?
     """ Evaluate the transit model using batman.
 
@@ -201,17 +202,19 @@ def analytic_transit_model(time: np.ndarray,
         The batman.TransitModel fac parameter.
     max_err: float
         The batman.TransitModel max_err parameter.
+    return_orbit: bool
+        If True the nu, xp, yp arrays are computed and returned.
 
     Returns
     -------
     flux: np.ndarray
         The relative flux of the star.
-    nu: np.ndarray
-        The true anomaly of the orbit.
-    xp: np.ndarray
-        The x-coordinate of the planet orbit.
-    yp: np.ndarray
-        The y-coordinate of the planet orbit.
+    nu: np.ndarray or None
+        The true anomaly of the orbit, returned only if return_orbit=True.
+    xp: np.ndarray or None
+        The x-coordinate of the planet orbit, returned only if return_orbit=True.
+    yp: np.ndarray or None
+        The y-coordinate of the planet orbit, returned only if return_orbit=True.
     params: batman.TransitParams
         The TransitParams instance used.
     fac: float or None
@@ -253,20 +256,23 @@ def analytic_transit_model(time: np.ndarray,
     model = batman.TransitModel(params, time, fac=fac, max_err=max_err, exp_time=exp_time, supersample_factor=supersample_factor)
 
     # Compute the true anomaly and the flux.
-    nu = model.get_true_anomaly()
     flux = model.light_curve(params)
 
-    # Convert angles to radians.
-    inc = inc * DEG2RAD
-    w = w * DEG2RAD
-    Omega = Omega * DEG2RAD
+    nu, xp, yp = None, None, None
+    if return_orbit:
 
-    # Compute the planets orbit in the plane of the sky.
-    r = (1 - ecc ** 2) / (1 + ecc * np.cos(nu))
-    xi = a * r * np.sin(nu + w - np.pi / 2.)
-    yi = a * r * np.cos(nu + w - np.pi / 2.) * np.cos(inc)
-    xp = xi * np.cos(Omega) - yi * np.sin(Omega)
-    yp = xi * np.sin(Omega) + yi * np.cos(Omega)
+        # Convert angles to radians.
+        inc = inc * DEG2RAD
+        w = w * DEG2RAD
+        Omega = Omega * DEG2RAD
+
+        # Compute the planets orbit in the plane of the sky.
+        nu = model.get_true_anomaly()
+        r = (1 - ecc ** 2) / (1 + ecc * np.cos(nu))
+        xi = a * r * np.sin(nu + w - np.pi / 2.)
+        yi = a * r * np.cos(nu + w - np.pi / 2.) * np.cos(inc)
+        xp = xi * np.cos(Omega) - yi * np.sin(Omega)
+        yp = xi * np.sin(Omega) + yi * np.cos(Omega)
 
     return flux, nu, xp, yp, params, model.fac
 

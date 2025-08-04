@@ -17,7 +17,7 @@ SECINDAY = 24*3600
 def evaluate_template(time,
                       period,
                       midpoint,
-                      depth_scale,
+                      depth,
                       flux_level,
                       template_edges,
                       template_model):
@@ -25,7 +25,7 @@ def evaluate_template(time,
     phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
     bin_idx = np.searchsorted(template_edges / period + 0.5, phase)  # Phase centered at 0.5
     template_model = np.append(np.append(0, template_model), 0)
-    flux = depth_scale*template_model[bin_idx] + flux_level
+    flux = depth*template_model[bin_idx] + flux_level
 
     return phase, flux
 
@@ -184,85 +184,54 @@ def make_period_groups(periods,
         intervals.append((imin, len(periods)))
 
     return intervals
+        
+        
+def _make_transit_templates(mid_times: np.ndarray,
+                            duration_grid: np.ndarray,
+                            transit_params: dict,
+                            supersample_factor: int,
+                            ld_type: str,
+                            ld_pars: tuple,
+                            exp_time: float,
+                            exp_cadence: float,
+                            search_mode: str = 'TLS',
+                            smooth_window: Optional[float] = None,
+                            smooth_weights: str = 'uniform'):
 
+    if search_mode == 'WLS':
 
-def _make_kernel(mid_times,
-                 duration_grid,
-                 transit_params,
-                 supersample_factor,
-                 ld_type,
-                 ld_pars,
-                 exp_time):
-    
+        # Create the grid of exposures inside the smoothing window.
+        nevals = np.ceil(smooth_window / exp_cadence).astype('int')
+        if nevals % 2 == 0:
+            nevals += 1
+
+        mid_idx = nevals // 2
+        dt = (np.arange(nevals) - mid_idx) * exp_cadence
+
+        # Compute the weights across the smoothing window.
+        if smooth_weights == 'uniform':
+            weights = np.ones_like(dt)
+
+        if smooth_weights == 'tricube':
+            radius = smooth_window/2
+            weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
+
+        # Normalize the weights.
+        weights = weights/np.sum(weights)
+
+        # Make the dt and weights values 2D.
+        dt = dt[:, np.newaxis]
+        weights = weights[:, np.newaxis]
+
+        # Get the full array of transit times needed to compute warped transits.
+        dt = dt + mid_times[np.newaxis, :]
+        dt_shape = dt.shape
+        dt = dt.ravel()
+
     nrows = len(duration_grid)
     ncols = len(mid_times)
     bls_template = np.zeros((nrows, ncols))
     tls_template = np.zeros((nrows, ncols))
-    for row_idx, duration in enumerate(duration_grid):
-        
-        # Compute the scaled semi-major axis that gives the required duration.
-        axis = models.duration2axis(duration,
-                                    transit_params['P'],
-                                    transit_params['R_p/R_s'],
-                                    transit_params['b'],
-                                    transit_params['ecc'],
-                                    transit_params['w'])
-        transit_params['a/R_s'] = axis
-
-        # Evaluate the transit model.
-        result = models.analytic_transit_model(mid_times,
-                                               transit_params,
-                                               'uniform',
-                                               [],
-                                               exp_time=exp_time,
-                                               supersample_factor=supersample_factor,
-                                               max_err=1.)
-        bls_template[row_idx] = result[0]
-
-        # Evaluate the transit model.
-        result = models.analytic_transit_model(mid_times,
-                                               transit_params,
-                                               ld_type,
-                                               ld_pars,
-                                               exp_time=exp_time,
-                                               supersample_factor=supersample_factor,
-                                               max_err=1.)
-        
-        tls_template[row_idx] = result[0]
-        
-    return bls_template, tls_template
-        
-        
-def _make_smooth_kernel(mid_times,
-                        duration_grid,
-                        transit_params,
-                        supersample_factor,
-                        ld_type,
-                        ld_pars,
-                        exp_time,
-                        exp_cadence,
-                        smooth_window,
-                        smooth_weights):
-
-    nevals = np.ceil(smooth_window / exp_cadence).astype('int')
-    if nevals % 2 == 0:
-        nevals += 1
-
-    mid_idx = nevals // 2
-    dt = (np.arange(nevals) - mid_idx) * exp_cadence
-
-    if smooth_weights == 'uniform':
-        weights = np.ones_like(dt)/len(dt)
-    elif smooth_weights == 'tricube':
-        radius = smooth_window/2
-        weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
-        weights = weights/np.sum(weights)
-    else:
-        raise ValueError(f"Invalid value '{smooth_weights}' for parameter 'smooth_weights'.")
-
-    nrows = len(duration_grid)
-    ncols = len(mid_times)
-    bls_template = np.zeros((nrows, ncols))
     wls_template = np.zeros((nrows, ncols))
     for row_idx, duration in enumerate(duration_grid):
 
@@ -293,11 +262,12 @@ def _make_smooth_kernel(mid_times,
                                                supersample_factor=supersample_factor,
                                                max_err=1.)
         fac = result[5]
+        tls_template[row_idx] = result[0]
 
-        for col_idx, mid_time in enumerate(mid_times):
+        if search_mode == 'WLS':
 
             # Evaluate the transit model.
-            result = models.analytic_transit_model(mid_time + dt,
+            result = models.analytic_transit_model(dt,
                                                    transit_params,
                                                    ld_type,
                                                    ld_pars,
@@ -307,9 +277,10 @@ def _make_smooth_kernel(mid_times,
                                                    max_err=1.)
 
             flux_dt = result[0]
-            wls_template[row_idx, col_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt)
+            flux_dt = flux_dt.reshape(dt_shape)
+            wls_template[row_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt, axis=0)
             
-    return bls_template, wls_template
+    return bls_template, tls_template, wls_template
 
 
 def make_template_grid(periods: np.ndarray,
@@ -331,6 +302,10 @@ def make_template_grid(periods: np.ndarray,
 
     if search_mode == 'WLS' and smooth_window is None:
         errmsg = f"Parameter smooth_window can not be None for WLS search."
+        raise ValueError(errmsg)
+
+    if smooth_weights not in ['uniform', 'tricube']:
+        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
     if search_mode == 'WLS' and smooth_window/np.amin(periods) > 0.5:  # TODO improve on this.
@@ -363,32 +338,27 @@ def make_template_grid(periods: np.ndarray,
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    if search_mode in ['BLS', 'TLS']:
-        bls_template, tls_template = _make_kernel(mid_times,
-                                                  duration_grid,
-                                                  transit_params,
-                                                  supersample_factor,
-                                                  ld_type,
-                                                  ld_pars,
-                                                  exp_time)
-    else:
-        bls_template, wls_template = _make_smooth_kernel(mid_times,
-                                                         duration_grid,
-                                                         transit_params,
-                                                         supersample_factor,
-                                                         ld_type,
-                                                         ld_pars,
-                                                         exp_time,
-                                                         exp_cadence,
-                                                         smooth_window,
-                                                         smooth_weights)
+    # Compute the transit templates.
+    result = _make_transit_templates(mid_times,
+                                     duration_grid,
+                                     transit_params,
+                                     supersample_factor,
+                                     ld_type,
+                                     ld_pars,
+                                     exp_time,
+                                     exp_cadence,
+                                     search_mode=search_mode,
+                                     smooth_window=smooth_window,
+                                     smooth_weights=smooth_weights)
+    bls_template, tls_template, wls_template = result
 
+    # Choose the final template based on the search mode.
     if search_mode == 'BLS':
-        template_models = (bls_template - 1)
+        template_models = (bls_template - 1)/ref_depth
     if search_mode == 'TLS':
-        template_models = (tls_template - 1)
+        template_models = (tls_template - 1)/ref_depth
     if search_mode == 'WLS':
-        template_models = (wls_template - 1)
+        template_models = (wls_template - 1)/ref_depth
 
     template_square = template_models ** 2
     template_count = (bls_template - 1) < 0
@@ -469,7 +439,7 @@ def _search_period(period,
     # The invalid values are handled below.
     with np.errstate(divide='ignore', invalid='ignore'):
         # Compute transit depth scale factor.
-        depth_scale = alpha / (beta - gamma ** 2)
+        depth = alpha / (beta - gamma ** 2)
 
     # Handle epoch/duration combinations with few or no in-transit points.
     # All elements of min_points must be >=1.
@@ -480,14 +450,14 @@ def _search_period(period,
     else:
         mask = npoints < min_points[:, np.newaxis]
 
-    depth_scale[mask] = 0
+    depth[mask] = 0
 
     # Compute the delta chi-square.
-    dchisq = alpha * depth_scale
+    dchisq = alpha * depth
 
     # Split delta chi-square by flux increaes and flux decreases.
     # Use flux increases to establish a baseline.
-    select_inc = depth_scale < 0
+    select_inc = depth < 0
     dchisq_inc = np.where(select_inc, dchisq, 0)
     dchisq_dec = np.where(select_inc, 0, dchisq)
     dchisq_inc = np.amax(dchisq_inc, axis=1)
@@ -509,8 +479,8 @@ def _search_period(period,
         plt.ylabel('Duration')
 
         plt.subplot(312, sharex=ax, sharey=ax)
-        vlim = np.amax(np.abs(depth_scale))
-        plt.pcolormesh(depth_scale, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        vlim = np.amax(np.abs(depth))
+        plt.pcolormesh(depth, vmin=-vlim, vmax=vlim, cmap='coolwarm')
         plt.colorbar(label='depth scale')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
@@ -533,10 +503,10 @@ def _search_period(period,
     # Store the parameters corresponding to peak power.
     best_template_idx = imin + irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
-    best_depth_scale = depth_scale[irow, icol]
-    best_flux_level = flux_mean - best_depth_scale * gamma[irow, icol]
+    best_depth = depth[irow, icol]
+    best_flux_level = flux_mean - best_depth * gamma[irow, icol]
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
 
 
 def _search_periods(periods, **kwargs):
@@ -547,7 +517,7 @@ def _search_periods(periods, **kwargs):
     dchisq_inc = np.zeros(npoints)
     best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
-    best_depth_scale = np.zeros(npoints)
+    best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
 
     search_func = partial(_search_period, **kwargs)
@@ -558,10 +528,10 @@ def _search_periods(periods, **kwargs):
         dchisq_inc[i] = result[2]
         best_template_idx[i] = result[3]
         best_midpoint[i] = result[4]
-        best_depth_scale[i] = result[5]
+        best_depth[i] = result[5]
         best_flux_level[i] = result[6]
     
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
 
 
 def _search_periods_with_pool(num_processes, periods, **kwargs):
@@ -572,7 +542,7 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
     dchisq_inc = np.zeros(npoints)
     best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
-    best_depth_scale = np.zeros(npoints)
+    best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
     
     search_func = partial(_search_periods, **kwargs)
@@ -586,11 +556,11 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
             dchisq_inc[i::num_processes] = result[2]
             best_template_idx[i::num_processes] = result[3]
             best_midpoint[i::num_processes] = result[4]
-            best_depth_scale[i::num_processes] = result[5]
+            best_depth[i::num_processes] = result[5]
             best_flux_level[i::num_processes] = result[6]
             i += 1
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
 
 
 SearchResult = namedtuple('lstsq_result',
@@ -605,7 +575,7 @@ SearchResult = namedtuple('lstsq_result',
                            'best_period',
                            'best_midpoint',
                            'best_duration',
-                           'best_depth_scale',
+                           'best_depth',
                            'best_flux_level',
                            'model_phase',
                            'model_flux'])
@@ -666,6 +636,10 @@ def template_lstsq(time: np.ndarray,
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
         raise ValueError(errmsg)
 
+    if smooth_weights not in ['uniform', 'tricube']:
+        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
+        raise ValueError(errmsg)
+
     # Make sure period grid is sorted.
     periods = np.sort(periods)
 
@@ -721,7 +695,7 @@ def template_lstsq(time: np.ndarray,
     best_period = np.nan
     best_midpoint = np.nan
     best_duration = np.nan
-    best_depth_scale = np.nan
+    best_depth = np.nan
     best_flux_level = np.nan
 
     for group in range(ngroups):
@@ -780,7 +754,7 @@ def template_lstsq(time: np.ndarray,
             best_period = periods[ipeak]
             best_midpoint = result[4][ipeak - imin]
             best_duration = duration_grid[best_template_idx]
-            best_depth_scale = result[5][ipeak - imin]
+            best_depth = result[5][ipeak - imin]
             best_flux_level = result[6][ipeak - imin]
             best_template_edges = template_edges
             best_template_model = template_models[best_template_idx]
@@ -789,7 +763,7 @@ def template_lstsq(time: np.ndarray,
     model_phase, model_flux = evaluate_template(time,
                                                 best_period,
                                                 best_midpoint,
-                                                best_depth_scale,
+                                                best_depth,
                                                 best_flux_level,
                                                 best_template_edges,
                                                 best_template_model)
@@ -805,7 +779,7 @@ def template_lstsq(time: np.ndarray,
                                  best_period=best_period,
                                  best_midpoint=best_midpoint,
                                  best_duration=best_duration,
-                                 best_depth_scale=best_depth_scale,
+                                 best_depth=best_depth,
                                  best_flux_level=best_flux_level,
                                  model_phase=model_phase,
                                  model_flux=model_flux)
