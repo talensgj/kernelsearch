@@ -81,6 +81,7 @@ def filter_wotan(time: np.ndarray,
 def _filter_ysd_lowess(time: np.ndarray,
                        flux: np.ndarray,
                        window_length: float,
+                       window_smooth: Optional[float] = None,
                        gap_size: float = 0.2,
                        prominence: float = 0.001,
                        width: tuple[Optional[int], Optional[int]] = (20, None),
@@ -96,6 +97,9 @@ def _filter_ysd_lowess(time: np.ndarray,
         Array of flux measurements corresponding to the observation times.
     window_length: float
         The size of the smoothing window used with wotan, must have the same units as time.
+    window_smooth: float or None
+        The window size to use for smoothing the lightcurve prior to peak/through detection.
+        If not given taken to be the same as window_length.
     gap_size: float
         The size of the data gap to create at peaks and troughs.
     prominence: float
@@ -111,25 +115,28 @@ def _filter_ysd_lowess(time: np.ndarray,
         The ysd_lowess trend.
     mask: np.ndarray
         The input values than can be used.
-    lowess: np.ndarray
-        The lowess trend, if no peaks and troughs were cut.
+    smooth: np.ndarray
+        The smoothed flux used for peak/through detection.
 
     """
 
+    if window_smooth is None:
+        window_smooth = window_length
+
     # Do a normal lowess filter.
-    print('Doing LOWESS detrending.')
-    _, lowess = wotan.flatten(time,
+    print('Smoothing for peak and trough detection.')
+    _, smooth = wotan.flatten(time,
                               flux,
                               method='lowess',
-                              window_length=window_length,
+                              window_length=window_smooth,
                               return_trend=True,
                               edge_cutoff=0.,
                               break_tolerance=None)  # None since these breaks are handled in the outer function.
 
     # Detect peaks and throughs on the lowess filter.
-    print('Detecting peaks and troughs on LOWESS trend.')
-    peaks, peak_info = signal.find_peaks(lowess, prominence=prominence, width=width)
-    troughs, trough_info = signal.find_peaks(-lowess, prominence=prominence, width=width)
+    print('Detecting peaks and troughs on smoothed data.')
+    peaks, peak_info = signal.find_peaks(smooth, prominence=prominence, width=width)
+    troughs, trough_info = signal.find_peaks(-smooth, prominence=prominence, width=width)
 
     print(f"Detected {len(peaks)} peaks and {len(troughs)} throughs.")
     # print(peak_info, trough_info)
@@ -166,7 +173,15 @@ def _filter_ysd_lowess(time: np.ndarray,
         mask = ~np.isnan(ysd_lowess)
         ysd_lowess[~mask] = 1.
     else:
-        ysd_lowess = np.copy(lowess)
+        # Perform YSD-lowess detrending.
+        print('Doing YSD-LOWESS detrending.')
+        _, ysd_lowess = wotan.flatten(time,
+                                      flux,
+                                      method='lowess',
+                                      window_length=window_length,
+                                      return_trend=True,
+                                      edge_cutoff=0.,
+                                      break_tolerance=None)
         mask = np.ones_like(ysd_lowess, dtype='bool')
 
     if debug:
@@ -177,15 +192,15 @@ def _filter_ysd_lowess(time: np.ndarray,
         plt.plot(time[near_peak_or_trough], flux[near_peak_or_trough], '.')
 
         # Plot the LOWESS and YSD-LOWESS trends.
-        plt.plot(time, lowess, lw=2, label='wotan LOWESS')
+        plt.plot(time, smooth, lw=2, label='wotan LOWESS smooth')
         plt.plot(time, ysd_lowess, lw=2, label='wotan YSD-LOWESS')
 
         # Mark the peaks and troughs.
-        ymax = lowess[peaks]
+        ymax = smooth[peaks]
         ymin = ymax - peak_info['prominences']
         plt.vlines(x=time[peaks], ymin=ymin, ymax=ymax, color='k', ls='-', lw=2)
 
-        ymax = lowess[troughs]
+        ymax = smooth[troughs]
         ymin = ymax + trough_info['prominences']
         plt.vlines(x=time[troughs], ymin=ymin, ymax=ymax, color='k', ls='--', lw=2)
 
@@ -197,7 +212,7 @@ def _filter_ysd_lowess(time: np.ndarray,
         plt.show()
         plt.close()
 
-    return ysd_lowess, mask, lowess
+    return ysd_lowess, mask, smooth
 
 
 def filter_ysd_lowess(time: np.ndarray,
@@ -205,6 +220,7 @@ def filter_ysd_lowess(time: np.ndarray,
                       flux_err: np.ndarray,
                       window_length: float,
                       cadence: float,
+                      window_smooth: Optional[float] = None,
                       gap_size: float = 0.2,
                       min_width: float = 7.5 / 24,
                       max_width: Optional[float] = None,
@@ -225,6 +241,9 @@ def filter_ysd_lowess(time: np.ndarray,
         The size of the smoothing window used with wotan, same units as time.
     cadence: float
         Cadence of the observations, same units as time.
+    window_smooth: float or None
+        The window size to use for smoothing the lightcurve prior to peak/through detection.
+        If not given taken to be the same as window_length.
     gap_size: float
         The size of the data gap to create at peaks and troughs, same units as time.
     min_width: float
@@ -278,6 +297,7 @@ def filter_ysd_lowess(time: np.ndarray,
         result = _filter_ysd_lowess(time_view,
                                     flux_view / median_val,
                                     window_length,
+                                    window_smooth=window_smooth,
                                     gap_size=gap_size,
                                     prominence=prominence,
                                     width=(min_width, max_width),
