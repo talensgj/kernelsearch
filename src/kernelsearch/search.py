@@ -17,7 +17,7 @@ SECINDAY = 24*3600
 def evaluate_template(time,
                       period,
                       midpoint,
-                      depth_scale,
+                      depth,
                       flux_level,
                       template_edges,
                       template_model):
@@ -25,7 +25,7 @@ def evaluate_template(time,
     phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
     bin_idx = np.searchsorted(template_edges / period + 0.5, phase)  # Phase centered at 0.5
     template_model = np.append(np.append(0, template_model), 0)
-    flux = depth_scale*template_model[bin_idx] + flux_level
+    flux = depth*template_model[bin_idx] + flux_level
 
     return phase, flux
 
@@ -354,11 +354,11 @@ def make_template_grid(periods: np.ndarray,
 
     # Choose the final template based on the search mode.
     if search_mode == 'BLS':
-        template_models = (bls_template - 1)
+        template_models = (bls_template - 1)/ref_depth
     if search_mode == 'TLS':
-        template_models = (tls_template - 1)
+        template_models = (tls_template - 1)/ref_depth
     if search_mode == 'WLS':
-        template_models = (wls_template - 1)
+        template_models = (wls_template - 1)/ref_depth
 
     template_square = template_models ** 2
     template_count = (bls_template - 1) < 0
@@ -439,7 +439,7 @@ def _search_period(period,
     # The invalid values are handled below.
     with np.errstate(divide='ignore', invalid='ignore'):
         # Compute transit depth scale factor.
-        depth_scale = alpha / (beta - gamma ** 2)
+        depth = alpha / (beta - gamma ** 2)
 
     # Handle epoch/duration combinations with few or no in-transit points.
     # All elements of min_points must be >=1.
@@ -450,14 +450,14 @@ def _search_period(period,
     else:
         mask = npoints < min_points[:, np.newaxis]
 
-    depth_scale[mask] = 0
+    depth[mask] = 0
 
     # Compute the delta chi-square.
-    dchisq = alpha * depth_scale
+    dchisq = alpha * depth
 
     # Split delta chi-square by flux increaes and flux decreases.
     # Use flux increases to establish a baseline.
-    select_inc = depth_scale < 0
+    select_inc = depth < 0
     dchisq_inc = np.where(select_inc, dchisq, 0)
     dchisq_dec = np.where(select_inc, 0, dchisq)
     dchisq_inc = np.amax(dchisq_inc, axis=1)
@@ -479,8 +479,8 @@ def _search_period(period,
         plt.ylabel('Duration')
 
         plt.subplot(312, sharex=ax, sharey=ax)
-        vlim = np.amax(np.abs(depth_scale))
-        plt.pcolormesh(depth_scale, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+        vlim = np.amax(np.abs(depth))
+        plt.pcolormesh(depth, vmin=-vlim, vmax=vlim, cmap='coolwarm')
         plt.colorbar(label='depth scale')
         plt.xlabel('Midpoint')
         plt.ylabel('Duration')
@@ -503,10 +503,10 @@ def _search_period(period,
     # Store the parameters corresponding to peak power.
     best_template_idx = imin + irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
-    best_depth_scale = depth_scale[irow, icol]
-    best_flux_level = flux_mean - best_depth_scale * gamma[irow, icol]
+    best_depth = depth[irow, icol]
+    best_flux_level = flux_mean - best_depth * gamma[irow, icol]
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
 
 
 def _search_periods(periods, **kwargs):
@@ -517,7 +517,7 @@ def _search_periods(periods, **kwargs):
     dchisq_inc = np.zeros(npoints)
     best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
-    best_depth_scale = np.zeros(npoints)
+    best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
 
     search_func = partial(_search_period, **kwargs)
@@ -528,10 +528,10 @@ def _search_periods(periods, **kwargs):
         dchisq_inc[i] = result[2]
         best_template_idx[i] = result[3]
         best_midpoint[i] = result[4]
-        best_depth_scale[i] = result[5]
+        best_depth[i] = result[5]
         best_flux_level[i] = result[6]
     
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
 
 
 def _search_periods_with_pool(num_processes, periods, **kwargs):
@@ -542,7 +542,7 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
     dchisq_inc = np.zeros(npoints)
     best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
-    best_depth_scale = np.zeros(npoints)
+    best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
     
     search_func = partial(_search_periods, **kwargs)
@@ -556,11 +556,11 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
             dchisq_inc[i::num_processes] = result[2]
             best_template_idx[i::num_processes] = result[3]
             best_midpoint[i::num_processes] = result[4]
-            best_depth_scale[i::num_processes] = result[5]
+            best_depth[i::num_processes] = result[5]
             best_flux_level[i::num_processes] = result[6]
             i += 1
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth_scale, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
 
 
 SearchResult = namedtuple('lstsq_result',
@@ -575,7 +575,7 @@ SearchResult = namedtuple('lstsq_result',
                            'best_period',
                            'best_midpoint',
                            'best_duration',
-                           'best_depth_scale',
+                           'best_depth',
                            'best_flux_level',
                            'model_phase',
                            'model_flux'])
@@ -695,7 +695,7 @@ def template_lstsq(time: np.ndarray,
     best_period = np.nan
     best_midpoint = np.nan
     best_duration = np.nan
-    best_depth_scale = np.nan
+    best_depth = np.nan
     best_flux_level = np.nan
 
     for group in range(ngroups):
@@ -754,7 +754,7 @@ def template_lstsq(time: np.ndarray,
             best_period = periods[ipeak]
             best_midpoint = result[4][ipeak - imin]
             best_duration = duration_grid[best_template_idx]
-            best_depth_scale = result[5][ipeak - imin]
+            best_depth = result[5][ipeak - imin]
             best_flux_level = result[6][ipeak - imin]
             best_template_edges = template_edges
             best_template_model = template_models[best_template_idx]
@@ -763,7 +763,7 @@ def template_lstsq(time: np.ndarray,
     model_phase, model_flux = evaluate_template(time,
                                                 best_period,
                                                 best_midpoint,
-                                                best_depth_scale,
+                                                best_depth,
                                                 best_flux_level,
                                                 best_template_edges,
                                                 best_template_model)
@@ -779,7 +779,7 @@ def template_lstsq(time: np.ndarray,
                                  best_period=best_period,
                                  best_midpoint=best_midpoint,
                                  best_duration=best_duration,
-                                 best_depth_scale=best_depth_scale,
+                                 best_depth=best_depth,
                                  best_flux_level=best_flux_level,
                                  model_phase=model_phase,
                                  model_flux=model_flux)
