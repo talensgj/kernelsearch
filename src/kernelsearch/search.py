@@ -211,11 +211,10 @@ def _make_transit_templates(mid_times: np.ndarray,
         # Compute the weights across the smoothing window.
         if smooth_weights == 'uniform':
             weights = np.ones_like(dt)
-        elif smooth_weights == 'tricube':
+
+        if smooth_weights == 'tricube':
             radius = smooth_window/2
             weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
-        else:
-            raise ValueError(f"Invalid value '{smooth_weights}' for parameter 'smooth_weights'.")
 
         # Normalize the weights.
         weights = weights/np.sum(weights)
