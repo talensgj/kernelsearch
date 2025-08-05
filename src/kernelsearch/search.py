@@ -398,7 +398,14 @@ def _search_period(period,
                    duration_grid,
                    templates,
                    min_points,
+                   is_short_period,
                    normalisation,
+                   smooth_window,
+                   smooth_weights,
+                   exp_time,
+                   exp_cadence,
+                   ld_type,
+                   ld_pars,
                    debug=False
                    ):
 
@@ -416,6 +423,23 @@ def _search_period(period,
     template_models = templates[1][imin:imax]
     template_square = templates[2][imin:imax]
     template_count = templates[3][imin:imax]
+
+    # At short periods WLS requires special treatment.
+    if is_short_period:
+        templates = make_template_grid(period,
+                                       duration_grid,
+                                       bin_size,
+                                       exp_time,
+                                       exp_cadence,
+                                       ld_type=ld_type,
+                                       ld_pars=ld_pars,
+                                       search_mode='WLS',
+                                       smooth_window=smooth_window,
+                                       smooth_weights=smooth_weights)
+        template_edges = templates[0]
+        template_models = templates[1]
+        template_square = templates[2]
+        template_count = templates[3]
 
     # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
@@ -653,6 +677,7 @@ def template_lstsq(time: np.ndarray,
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
                    search_mode: str = 'TLS',
+                   short_periods: str = 'skip',
                    normalisation: str = 'normal',
                    smooth_window: Optional[float] = None,
                    smooth_weights: str = 'uniform',
@@ -670,9 +695,17 @@ def template_lstsq(time: np.ndarray,
         errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(errmsg)
 
+    if short_periods not in ['skip', 'TLS', 'WLS']:
+        errmsg = f"Invalid value '{short_periods}' for parameter short_periods."
+        raise ValueError(errmsg)
+
     if search_mode == 'WLS' and smooth_window is None:
         errmsg = f"Parameter smooth_window can not be None for WLS search."
         raise ValueError(errmsg)
+
+    if search_mode != 'WLS' and smooth_window is not None:
+        print(f'Warning: performing {search_mode} search, setting smooth_window to None.')
+        smooth_window = None
 
     if normalisation not in ['normal', 'dec_minus_inc']:
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
@@ -745,6 +778,21 @@ def template_lstsq(time: np.ndarray,
         jmin, jmax = duration_groups[group]
         duration_grid = durations[jmin:jmax]
 
+        search_mode_ = search_mode
+        is_short_period = False
+        baseline = np.amin(period_grid) - np.amax(duration_grid) - exp_time
+        if search_mode == 'WLS' and baseline < smooth_window:
+            if short_periods == 'skip':
+                print('Skipping short periods in WLS search.')
+                continue
+            if short_periods == 'TLS':
+                search_mode_ = 'TLS'
+                print('Using TLS templates for short periods in WLS search.')
+            if short_periods == 'WLS':
+                search_mode_ = 'TLS'
+                is_short_period = True
+                print('Using WLS templates for short periods in WLS search.')
+
         # Compute the template models for the current period set.
         templates = make_template_grid(period_grid,
                                        duration_grid,
@@ -753,7 +801,7 @@ def template_lstsq(time: np.ndarray,
                                        exp_cadence,
                                        ld_type=ld_type,
                                        ld_pars=ld_pars,
-                                       search_mode=search_mode,
+                                       search_mode=search_mode_,
                                        smooth_window=smooth_window,
                                        smooth_weights=smooth_weights)
 
@@ -771,7 +819,14 @@ def template_lstsq(time: np.ndarray,
         kwargs['duration_grid'] = duration_grid
         kwargs['templates'] = templates
         kwargs['min_points'] = 0.5*duration_grid/exp_cadence
+        kwargs['is_short_period'] = is_short_period
         kwargs['normalisation'] = normalisation
+        kwargs['smooth_window'] = smooth_window
+        kwargs['smooth_weights'] = smooth_weights
+        kwargs['exp_time'] = exp_time
+        kwargs['exp_cadence'] = exp_cadence
+        kwargs['ld_type'] = ld_type
+        kwargs['ld_pars'] = ld_pars
 
         if num_processes is None:
             result = _search_periods(period_grid, **kwargs)
