@@ -685,13 +685,6 @@ def template_lstsq(time: np.ndarray,
     # Make sure period grid is sorted.
     periods = np.sort(periods)
 
-    # Discard short periods when using smoothed kernels.
-    # Computing smoothed kernels is hard when P ~ smooth_window.
-    if search_mode == 'WLS':
-        print(f"Warning: discarding periods less than 2 times the smoothing window for WLS search: P < {2*smooth_window} days.")
-        mask = periods >= 2 * smooth_window
-        periods = periods[mask]
-
     # Pre-compute some arrays.
     result = _prepare_lightcurve(flux, flux_err)
     weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
