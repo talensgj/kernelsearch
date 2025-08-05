@@ -170,17 +170,29 @@ def get_duration_grid(periods: np.ndarray,
 
 
 def make_period_groups(periods,
+                       exp_time,
                        R_star_min,
                        R_star_max,
                        M_star_min,
                        M_star_max,
+                       smooth_window=None,
                        max_duty_cycle=0.15):
 
     imin = 0
     intervals = []
+    if smooth_window is not None:
+        # Guaranteed baseline if this period is the start of a period group.
+        baseline = (1 - max_duty_cycle)*periods
+
+        # Index of shortest period with baseline > smooth_window
+        imin = np.searchsorted(baseline, smooth_window)
+
+        if imin > 0:
+            intervals = [(0, imin)]
+
     for i, period in enumerate(periods):
         min_duration, max_duration = _get_duration_lims(period, R_star_min, R_star_max, M_star_min, M_star_max)
-        if max_duration/periods[imin] > max_duty_cycle:
+        if (max_duration + exp_time)/periods[imin] > max_duty_cycle:
             intervals.append((imin, i))
             imin = i
 
@@ -681,10 +693,12 @@ def template_lstsq(time: np.ndarray,
 
     # Group the periods for re-computing the kernels.
     period_groups = make_period_groups(periods,
+                                       exp_time,
                                        R_star_min,
                                        R_star_max,
                                        M_star_min,
                                        M_star_max,
+                                       smooth_window=smooth_window,
                                        max_duty_cycle=max_duty_cycle)
 
     ngroups = len(period_groups)
