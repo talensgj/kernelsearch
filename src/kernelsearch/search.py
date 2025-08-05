@@ -324,19 +324,22 @@ def make_template_grid(periods: np.ndarray,
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
-    if search_mode == 'WLS' and smooth_window/np.amin(periods) > 0.5:  # TODO improve on this.
-        print("Warning: Cannot make WLS templates at short periods, defaulting to TLS templates.")
-        search_mode = 'TLS'
-
-    supersample_factor = np.ceil(exp_time * SECINDAY / 10.).astype('int')
-
-    ref_period = np.amax(periods)
+    min_period = np.amin(periods)
+    max_period = np.amax(periods)
     max_duration = np.amax(duration_grid)
+
+    baseline = min_period - max_duration - exp_time
+    if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
+        print("Warning: Cannot make WLS templates for this period range, defaulting to TLS templates.")
+        search_mode = 'TLS'
 
     if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
     else:
         delta_time = max_duration + exp_time + smooth_window
+
+    if periods.size == 1:
+        delta_time = np.minimum(delta_time, max_period)
 
     # Determine the times at which to evaluate the template.
     nbins = np.ceil(delta_time/bin_size).astype('int')
@@ -346,13 +349,15 @@ def make_template_grid(periods: np.ndarray,
     # Set up the transit parameters.
     transit_params = dict()
     transit_params['T_0'] = 0.
-    transit_params['P'] = ref_period
+    transit_params['P'] = max_period
     transit_params['R_p/R_s'] = np.sqrt(ref_depth)
     transit_params['a/R_s'] = 0.
     transit_params['b'] = 0.
     transit_params['ecc'] = 0.
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
+
+    supersample_factor = np.ceil(exp_time * SECINDAY / 10.).astype('int')
 
     # Compute the transit templates.
     result = _make_transit_templates(mid_times,
