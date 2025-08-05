@@ -126,7 +126,11 @@ def _duration_grid(min_duration: float,
         # Increment by fractions of the previous transits ingress/egress.
         duration_step = (duration - full) / oversampling
         duration = duration + duration_step
-        duration_grid.append(duration)
+
+        if duration < max_duration:
+            duration_grid.append(duration)
+        else:
+            duration_grid.append(max_duration)
 
     duration_grid = np.array(duration_grid)
 
