@@ -375,9 +375,7 @@ def _search_period(period,
                    bin_size,
                    star_kwargs,
                    duration_grid,
-                   template_models,
-                   template_square,
-                   template_count,
+                   templates,
                    min_points,
                    normalisation,
                    debug=False
@@ -390,10 +388,13 @@ def _search_period(period,
     imin = np.maximum(imin - 1, 0)
     imax = np.minimum(imax, len(duration_grid))
 
-    template_models = template_models[imin:imax]
-    template_square = template_square[imin:imax]
-    template_count = template_count[imin:imax]
     min_points = min_points[imin:imax]
+    duration_grid = duration_grid[imin:imax]
+
+    template_edges = templates[0]
+    template_models = templates[1][imin:imax]
+    template_square = templates[2][imin:imax]
+    template_count = templates[3][imin:imax]
 
     # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
@@ -501,12 +502,14 @@ def _search_period(period,
     dchisq_inc = dchisq_inc[irow]
 
     # Store the parameters corresponding to peak power.
-    best_template_idx = imin + irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
+    best_duration = duration_grid[irow]
     best_depth = depth[irow, icol]
     best_flux_level = flux_mean - best_depth * gamma[irow, icol]
+    best_edges = template_edges
+    best_model = template_models[irow]
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
 def _search_periods(periods, **kwargs):
@@ -515,23 +518,32 @@ def _search_periods(periods, **kwargs):
     power = np.zeros(npoints)
     dchisq_dec = np.zeros(npoints)
     dchisq_inc = np.zeros(npoints)
-    best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
+    best_duration = np.zeros(npoints)
     best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
+    best_edges = None
+    best_model = None
 
+    peak_power = -np.inf
     search_func = partial(_search_period, **kwargs)
     for i, period in enumerate(periods):
         result = search_func(period)
+
         power[i] = result[0]
         dchisq_dec[i] = result[1]
         dchisq_inc[i] = result[2]
-        best_template_idx[i] = result[3]
-        best_midpoint[i] = result[4]
+        best_midpoint[i] = result[3]
+        best_duration[i] = result[4]
         best_depth[i] = result[5]
         best_flux_level[i] = result[6]
+
+        if power[i] > peak_power:
+            peak_power = power[i]
+            best_edges = result[7]
+            best_model = result[8]
     
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
 def _search_periods_with_pool(num_processes, periods, **kwargs):
@@ -540,11 +552,14 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
     power = np.zeros(npoints)
     dchisq_dec = np.zeros(npoints)
     dchisq_inc = np.zeros(npoints)
-    best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
+    best_duration = np.zeros(npoints)
     best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
-    
+    best_edges = None
+    best_model = None
+
+    peak_power = -np.inf
     search_func = partial(_search_periods, **kwargs)
     with mp.Pool(processes=num_processes) as pool:
         
@@ -554,13 +569,19 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
             power[i::num_processes] = result[0]
             dchisq_dec[i::num_processes] = result[1]
             dchisq_inc[i::num_processes] = result[2]
-            best_template_idx[i::num_processes] = result[3]
-            best_midpoint[i::num_processes] = result[4]
+            best_midpoint[i::num_processes] = result[3]
+            best_duration[i::num_processes] = result[4]
             best_depth[i::num_processes] = result[5]
             best_flux_level[i::num_processes] = result[6]
+
+            if np.amax(result[0]) > peak_power:
+                peak_power = np.amax(result[0])
+                best_edges = result[7]
+                best_model = result[8]
+
             i += 1
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
 SearchResult = namedtuple('lstsq_result',
@@ -709,17 +730,16 @@ def template_lstsq(time: np.ndarray,
         duration_grid = durations[jmin:jmax]
 
         # Compute the template models for the current period set.
-        result = make_template_grid(period_grid,
-                                    duration_grid,
-                                    bin_size,
-                                    exp_time,
-                                    exp_cadence,
-                                    ld_type=ld_type,
-                                    ld_pars=ld_pars,
-                                    search_mode=search_mode,
-                                    smooth_window=smooth_window,
-                                    smooth_weights=smooth_weights)
-        template_edges, template_models, template_square, template_count = result
+        templates = make_template_grid(period_grid,
+                                       duration_grid,
+                                       bin_size,
+                                       exp_time,
+                                       exp_cadence,
+                                       ld_type=ld_type,
+                                       ld_pars=ld_pars,
+                                       search_mode=search_mode,
+                                       smooth_window=smooth_window,
+                                       smooth_weights=smooth_weights)
 
         kwargs = dict()
         kwargs['time'] = time
@@ -733,9 +753,7 @@ def template_lstsq(time: np.ndarray,
                                  'M_star_min': M_star_min,
                                  'M_star_max': M_star_max}
         kwargs['duration_grid'] = duration_grid
-        kwargs['template_models'] = template_models
-        kwargs['template_square'] = template_square
-        kwargs['template_count'] = template_count
+        kwargs['templates'] = templates
         kwargs['min_points'] = 0.5*duration_grid/exp_cadence
         kwargs['normalisation'] = normalisation
 
@@ -750,14 +768,13 @@ def template_lstsq(time: np.ndarray,
 
         ipeak = np.argmax(power)
         if ipeak >= imin:
-            best_template_idx = result[3][ipeak - imin]
             best_period = periods[ipeak]
-            best_midpoint = result[4][ipeak - imin]
-            best_duration = duration_grid[best_template_idx]
+            best_midpoint = result[3][ipeak - imin]
+            best_duration = result[4][ipeak - imin]
             best_depth = result[5][ipeak - imin]
             best_flux_level = result[6][ipeak - imin]
-            best_template_edges = template_edges
-            best_template_model = template_models[best_template_idx]
+            best_template_edges = result[7]
+            best_template_model = result[8]
 
     # Return the template model for the highest peak.
     model_phase, model_flux = evaluate_template(time,
