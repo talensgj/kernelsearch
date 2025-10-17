@@ -126,7 +126,11 @@ def _duration_grid(min_duration: float,
         # Increment by fractions of the previous transits ingress/egress.
         duration_step = (duration - full) / oversampling
         duration = duration + duration_step
-        duration_grid.append(duration)
+
+        if duration < max_duration:
+            duration_grid.append(duration)
+        else:
+            duration_grid.append(max_duration)
 
     duration_grid = np.array(duration_grid)
 
@@ -166,17 +170,29 @@ def get_duration_grid(periods: np.ndarray,
 
 
 def make_period_groups(periods,
+                       exp_time,
                        R_star_min,
                        R_star_max,
                        M_star_min,
                        M_star_max,
+                       smooth_window=None,
                        max_duty_cycle=0.15):
 
     imin = 0
     intervals = []
+    if smooth_window is not None:
+        # Guaranteed baseline if this period is the start of a period group.
+        baseline = (1 - max_duty_cycle)*periods
+
+        # Index of shortest period with baseline > smooth_window
+        imin = np.searchsorted(baseline, smooth_window)
+
+        if imin > 0:
+            intervals = [(0, imin)]
+
     for i, period in enumerate(periods):
         min_duration, max_duration = _get_duration_lims(period, R_star_min, R_star_max, M_star_min, M_star_max)
-        if max_duration/periods[imin] > max_duty_cycle:
+        if (max_duration + exp_time)/periods[imin] > max_duty_cycle:
             intervals.append((imin, i))
             imin = i
 
@@ -308,19 +324,22 @@ def make_template_grid(periods: np.ndarray,
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
-    if search_mode == 'WLS' and smooth_window/np.amin(periods) > 0.5:  # TODO improve on this.
-        print("Warning: Cannot make WLS templates at short periods, defaulting to TLS templates.")
-        search_mode = 'TLS'
-
-    supersample_factor = np.ceil(exp_time * SECINDAY / 10.).astype('int')
-
-    ref_period = np.amax(periods)
+    min_period = np.amin(periods)
+    max_period = np.amax(periods)
     max_duration = np.amax(duration_grid)
+
+    baseline = min_period - max_duration - exp_time
+    if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
+        print("Warning: Cannot make WLS templates for this period range, defaulting to TLS templates.")
+        search_mode = 'TLS'
 
     if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
     else:
         delta_time = max_duration + exp_time + smooth_window
+
+    if periods.size == 1:
+        delta_time = np.minimum(delta_time, max_period)
 
     # Determine the times at which to evaluate the template.
     nbins = np.ceil(delta_time/bin_size).astype('int')
@@ -330,13 +349,15 @@ def make_template_grid(periods: np.ndarray,
     # Set up the transit parameters.
     transit_params = dict()
     transit_params['T_0'] = 0.
-    transit_params['P'] = ref_period
+    transit_params['P'] = max_period
     transit_params['R_p/R_s'] = np.sqrt(ref_depth)
     transit_params['a/R_s'] = 0.
     transit_params['b'] = 0.
     transit_params['ecc'] = 0.
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
+
+    supersample_factor = np.ceil(exp_time * SECINDAY / 10.).astype('int')
 
     # Compute the transit templates.
     result = _make_transit_templates(mid_times,
@@ -375,11 +396,16 @@ def _search_period(period,
                    bin_size,
                    star_kwargs,
                    duration_grid,
-                   template_models,
-                   template_square,
-                   template_count,
+                   templates,
                    min_points,
+                   is_short_period,
                    normalisation,
+                   smooth_window,
+                   smooth_weights,
+                   exp_time,
+                   exp_cadence,
+                   ld_type,
+                   ld_pars,
                    debug=False
                    ):
 
@@ -390,10 +416,30 @@ def _search_period(period,
     imin = np.maximum(imin - 1, 0)
     imax = np.minimum(imax, len(duration_grid))
 
-    template_models = template_models[imin:imax]
-    template_square = template_square[imin:imax]
-    template_count = template_count[imin:imax]
     min_points = min_points[imin:imax]
+    duration_grid = duration_grid[imin:imax]
+
+    template_edges = templates[0]
+    template_models = templates[1][imin:imax]
+    template_square = templates[2][imin:imax]
+    template_count = templates[3][imin:imax]
+
+    # At short periods WLS requires special treatment.
+    if is_short_period:
+        templates = make_template_grid(period,
+                                       duration_grid,
+                                       bin_size,
+                                       exp_time,
+                                       exp_cadence,
+                                       ld_type=ld_type,
+                                       ld_pars=ld_pars,
+                                       search_mode='WLS',
+                                       smooth_window=smooth_window,
+                                       smooth_weights=smooth_weights)
+        template_edges = templates[0]
+        template_models = templates[1]
+        template_square = templates[2]
+        template_count = templates[3]
 
     # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
@@ -501,12 +547,14 @@ def _search_period(period,
     dchisq_inc = dchisq_inc[irow]
 
     # Store the parameters corresponding to peak power.
-    best_template_idx = imin + irow
     best_midpoint = period*(bin_edges[icol] + bin_edges[icol + ncols])/2
+    best_duration = duration_grid[irow]
     best_depth = depth[irow, icol]
     best_flux_level = flux_mean - best_depth * gamma[irow, icol]
+    best_edges = template_edges
+    best_model = template_models[irow]
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
 def _search_periods(periods, **kwargs):
@@ -515,23 +563,32 @@ def _search_periods(periods, **kwargs):
     power = np.zeros(npoints)
     dchisq_dec = np.zeros(npoints)
     dchisq_inc = np.zeros(npoints)
-    best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
+    best_duration = np.zeros(npoints)
     best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
+    best_edges = None
+    best_model = None
 
+    peak_power = -np.inf
     search_func = partial(_search_period, **kwargs)
     for i, period in enumerate(periods):
         result = search_func(period)
+
         power[i] = result[0]
         dchisq_dec[i] = result[1]
         dchisq_inc[i] = result[2]
-        best_template_idx[i] = result[3]
-        best_midpoint[i] = result[4]
+        best_midpoint[i] = result[3]
+        best_duration[i] = result[4]
         best_depth[i] = result[5]
         best_flux_level[i] = result[6]
+
+        if power[i] > peak_power:
+            peak_power = power[i]
+            best_edges = result[7]
+            best_model = result[8]
     
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
 def _search_periods_with_pool(num_processes, periods, **kwargs):
@@ -540,11 +597,14 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
     power = np.zeros(npoints)
     dchisq_dec = np.zeros(npoints)
     dchisq_inc = np.zeros(npoints)
-    best_template_idx = np.zeros(npoints, dtype='int')
     best_midpoint = np.zeros(npoints)
+    best_duration = np.zeros(npoints)
     best_depth = np.zeros(npoints)
     best_flux_level = np.zeros(npoints)
-    
+    best_edges = None
+    best_model = None
+
+    peak_power = -np.inf
     search_func = partial(_search_periods, **kwargs)
     with mp.Pool(processes=num_processes) as pool:
         
@@ -554,13 +614,19 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
             power[i::num_processes] = result[0]
             dchisq_dec[i::num_processes] = result[1]
             dchisq_inc[i::num_processes] = result[2]
-            best_template_idx[i::num_processes] = result[3]
-            best_midpoint[i::num_processes] = result[4]
+            best_midpoint[i::num_processes] = result[3]
+            best_duration[i::num_processes] = result[4]
             best_depth[i::num_processes] = result[5]
             best_flux_level[i::num_processes] = result[6]
+
+            if np.amax(result[0]) > peak_power:
+                peak_power = np.amax(result[0])
+                best_edges = result[7]
+                best_model = result[8]
+
             i += 1
 
-    return power, dchisq_dec, dchisq_inc, best_template_idx, best_midpoint, best_depth, best_flux_level
+    return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
 SearchResult = namedtuple('lstsq_result',
@@ -611,6 +677,7 @@ def template_lstsq(time: np.ndarray,
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
                    search_mode: str = 'TLS',
+                   short_periods: str = 'skip',
                    normalisation: str = 'normal',
                    smooth_window: Optional[float] = None,
                    smooth_weights: str = 'uniform',
@@ -628,9 +695,17 @@ def template_lstsq(time: np.ndarray,
         errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(errmsg)
 
+    if short_periods not in ['skip', 'TLS', 'WLS']:
+        errmsg = f"Invalid value '{short_periods}' for parameter short_periods."
+        raise ValueError(errmsg)
+
     if search_mode == 'WLS' and smooth_window is None:
         errmsg = f"Parameter smooth_window can not be None for WLS search."
         raise ValueError(errmsg)
+
+    if search_mode != 'WLS' and smooth_window is not None:
+        print(f'Warning: performing {search_mode} search, setting smooth_window to None.')
+        smooth_window = None
 
     if normalisation not in ['normal', 'dec_minus_inc']:
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
@@ -643,23 +718,18 @@ def template_lstsq(time: np.ndarray,
     # Make sure period grid is sorted.
     periods = np.sort(periods)
 
-    # Discard short periods when using smoothed kernels.
-    # Computing smoothed kernels is hard when P ~ smooth_window.
-    if search_mode == 'WLS':
-        print(f"Warning: discarding periods less than 2 times the smoothing window for WLS search: P < {2*smooth_window} days.")
-        mask = periods >= 2 * smooth_window
-        periods = periods[mask]
-
     # Pre-compute some arrays.
     result = _prepare_lightcurve(flux, flux_err)
     weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
 
     # Group the periods for re-computing the kernels.
     period_groups = make_period_groups(periods,
+                                       exp_time,
                                        R_star_min,
                                        R_star_max,
                                        M_star_min,
                                        M_star_max,
+                                       smooth_window=smooth_window,
                                        max_duty_cycle=max_duty_cycle)
 
     ngroups = len(period_groups)
@@ -708,18 +778,32 @@ def template_lstsq(time: np.ndarray,
         jmin, jmax = duration_groups[group]
         duration_grid = durations[jmin:jmax]
 
+        search_mode_ = search_mode
+        is_short_period = False
+        baseline = np.amin(period_grid) - np.amax(duration_grid) - exp_time
+        if search_mode == 'WLS' and baseline < smooth_window:
+            if short_periods == 'skip':
+                print('Skipping short periods in WLS search.')
+                continue
+            if short_periods == 'TLS':
+                search_mode_ = 'TLS'
+                print('Using TLS templates for short periods in WLS search.')
+            if short_periods == 'WLS':
+                search_mode_ = 'TLS'
+                is_short_period = True
+                print('Using WLS templates for short periods in WLS search.')
+
         # Compute the template models for the current period set.
-        result = make_template_grid(period_grid,
-                                    duration_grid,
-                                    bin_size,
-                                    exp_time,
-                                    exp_cadence,
-                                    ld_type=ld_type,
-                                    ld_pars=ld_pars,
-                                    search_mode=search_mode,
-                                    smooth_window=smooth_window,
-                                    smooth_weights=smooth_weights)
-        template_edges, template_models, template_square, template_count = result
+        templates = make_template_grid(period_grid,
+                                       duration_grid,
+                                       bin_size,
+                                       exp_time,
+                                       exp_cadence,
+                                       ld_type=ld_type,
+                                       ld_pars=ld_pars,
+                                       search_mode=search_mode_,
+                                       smooth_window=smooth_window,
+                                       smooth_weights=smooth_weights)
 
         kwargs = dict()
         kwargs['time'] = time
@@ -733,11 +817,16 @@ def template_lstsq(time: np.ndarray,
                                  'M_star_min': M_star_min,
                                  'M_star_max': M_star_max}
         kwargs['duration_grid'] = duration_grid
-        kwargs['template_models'] = template_models
-        kwargs['template_square'] = template_square
-        kwargs['template_count'] = template_count
+        kwargs['templates'] = templates
         kwargs['min_points'] = 0.5*duration_grid/exp_cadence
+        kwargs['is_short_period'] = is_short_period
         kwargs['normalisation'] = normalisation
+        kwargs['smooth_window'] = smooth_window
+        kwargs['smooth_weights'] = smooth_weights
+        kwargs['exp_time'] = exp_time
+        kwargs['exp_cadence'] = exp_cadence
+        kwargs['ld_type'] = ld_type
+        kwargs['ld_pars'] = ld_pars
 
         if num_processes is None:
             result = _search_periods(period_grid, **kwargs)
@@ -750,14 +839,13 @@ def template_lstsq(time: np.ndarray,
 
         ipeak = np.argmax(power)
         if ipeak >= imin:
-            best_template_idx = result[3][ipeak - imin]
             best_period = periods[ipeak]
-            best_midpoint = result[4][ipeak - imin]
-            best_duration = duration_grid[best_template_idx]
+            best_midpoint = result[3][ipeak - imin]
+            best_duration = result[4][ipeak - imin]
             best_depth = result[5][ipeak - imin]
             best_flux_level = result[6][ipeak - imin]
-            best_template_edges = template_edges
-            best_template_model = template_models[best_template_idx]
+            best_template_edges = result[7]
+            best_template_model = result[8]
 
     # Return the template model for the highest peak.
     model_phase, model_flux = evaluate_template(time,
