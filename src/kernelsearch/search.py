@@ -36,22 +36,9 @@ def _get_duration_lims(period,
                        M_star_min,
                        M_star_max):
 
-    #max_duration = grid.T14(
-    #    R_s=R_star_max,
-    #    M_s=M_star_min,
-    #    P=period,
-    #    small=False  # large planet for long transit duration
-    #)
-    #min_duration = grid.T14(
-    #    R_s=R_star_min,
-    #    M_s=M_star_max,
-    #    P=period,
-    #    small=True  # small planet for short transit duration
-    #)
-
-    rho_min = 1.41 * M_star_min / (R_star_max ** 3)
+    rho_min = 1.41 * M_star_min / (R_star_max ** 3) # 1.41 -> convert from solar density to g/cm^3
     rho_max = 1.41 * M_star_max / (R_star_min ** 3)
-    p_large = 0.2 / R_star_max
+    p_large = 0.2 / R_star_max # ~2 R_jupiter
     p_small = 0
 
     max_duration = models.density2duration(
@@ -66,7 +53,7 @@ def _get_duration_lims(period,
         rho_max,                                    
         period, 
         p_small, 
-        b = 0.7, 
+        b = 0.9, 
         ecc = 0, 
         w = 0
         )
@@ -91,7 +78,6 @@ def _get_duration_lims0(period,
         P=period,
         small=True  # small planet for short transit duration
     )
-
 
     min_duration = min_duration*period
     max_duration = max_duration*period
