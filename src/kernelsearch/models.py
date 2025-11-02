@@ -35,20 +35,23 @@ def axis2duration(a, per, p, b, ecc, w):
     """ Convert the scaled semi-major axis to transit duration.
     """
 
+    alpha = np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+    beta = (1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+
     # Duration in the case of a circular orbit.
-    sin_sq = ((1 + p) ** 2 - b ** 2) / (a ** 2 - b ** 2)
+    sin_sq = ((1 + p) ** 2 - b ** 2) / (a  ** 2 - (b / beta) ** 2)
     transit_duration = per / np.pi * np.arcsin(np.sqrt(sin_sq))
 
     # Eccentricity correction (for transits).
-    transit_duration = transit_duration * np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+    transit_duration = transit_duration * alpha
 
     return transit_duration
 
 
-def axis2full(a, per, p, b, ecc, w):
+def axis2full(a, per, k, b, ecc, w):
     """"""
 
-    sin_sq = ((1 - p) ** 2 - b ** 2) / (a ** 2 - b ** 2)
+    sin_sq = ((1 - k) ** 2 - b ** 2) / (a ** 2 - b ** 2)
     transit_full = per / np.pi * np.arcsin(np.sqrt(sin_sq))
 
     # Eccentricity correction (for transits).
@@ -57,16 +60,19 @@ def axis2full(a, per, p, b, ecc, w):
     return transit_full
 
 
-def duration2axis(transit_duration, per, p, b, ecc, w):
+def duration2axis(transit_duration, per, k, b, ecc, w):
     """ Convert the scaled semi-major axis to transit duration.
     """
+    
+    alpha = np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+    beta = (1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
 
     # Eccentricity correction (for transits).
-    transit_duration = transit_duration / (np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD)))
+    transit_duration = transit_duration / alpha
 
     # Duration in the case of a circular orbit.
     sin_sq = np.sin(transit_duration/per*np.pi)**2
-    asq = ((1 + p) ** 2 - b ** 2)/sin_sq + b ** 2
+    asq = ((1 + k) ** 2 - b ** 2)/sin_sq + (b / beta)** 2
 
     return np.sqrt(asq)
 
@@ -97,6 +103,13 @@ def density2axis(rho, per):
     a = a.decompose()
 
     return a.value
+
+def density2duration(rho, per, k, b, ecc, w):
+    a = density2axis(rho, per)
+    transit_duration = axis2duration(a, per, k, b, ecc, w)
+
+    return transit_duration
+    
 
 
 def transit_masks(time: np.ndarray,
