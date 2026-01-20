@@ -28,6 +28,44 @@ SECINDAY = 24. * 60. * 60.  # s/day
 MIN_PERIOD = 0.1  # days
 
 
+##############
+# EPOCH GRID #
+##############
+
+def get_epoch_step(min_duration: float,
+                   epoch_sampling: int = 20,
+                   min_epoch_step: float = 60/SECINDAY,  # TODO Value ok?
+                   max_epoch_step: float = 300/SECINDAY  # TODO Value ok?
+                   ) -> float:
+    """ Compute a suitable epoch step based on the shortest duration searched.
+
+    Parameters
+    ----------
+    min_duration: float
+        The shortest duration searched in days.
+    epoch_sampling: int
+        The number of epoch steps to take in the shortest duration
+        (default: 20).
+    min_epoch_step: float
+        The smallest acceptable epoch step in days (default: 1 minute).
+    max_epoch_step: float
+        The largest acceptable epoch step in days (default: 5 minutes).
+
+    Return
+    ------
+    epoch_step: float
+        The optimal epoch step to be used in days.
+
+    """
+
+    epoch_step = min_duration / epoch_sampling
+
+    epoch_step = np.maximum(epoch_step, min_epoch_step)
+    epoch_step = np.minimum(epoch_step, max_epoch_step)
+
+    return epoch_step
+
+
 ###############
 # PERIOD GRID #
 ###############
