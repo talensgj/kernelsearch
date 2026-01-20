@@ -430,6 +430,47 @@ def get_transit_duration_limits(period_grid: np.ndarray,
     return duration_limits, inner_orbit, outer_orbit
 
 
+def get_transit_duration_grid(min_duration: float,
+                              max_duration: float,
+                              frac_duration_step: float = 1.05
+                              ) -> np.ndarray:
+    """ Compute the duration grid to search.
+
+    Parameters
+    ----------
+    min_duration: float
+        The minimum transit duration.
+    max_duration: float
+        The maximum transit duration.
+    frac_duration_step: float
+        The ratio between consecutive durations in the grid. Equivalent to a
+        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+
+    Returns
+    -------
+    duration_grid: np.ndarray
+        The duration grid to search.
+
+    """
+
+    if max_duration < min_duration:
+        msg = f"The maximum duration is less than the minimum duration, please fix your inputs."
+        raise ValueError(msg)
+
+    # Compute the logs of the min and max transit duration.
+    log_min_duration = np.log10(min_duration)
+    log_max_duration = np.log10(max_duration)
+
+    # Compute the number of steps needed in the log-spaced grid.
+    num_steps = (log_max_duration - log_min_duration)/np.log10(frac_duration_step)
+    num_steps = np.ceil(num_steps).astype('int')
+
+    # Evaluate the log-spaced duration grid.
+    duration_grid = np.logspace(log_min_duration, log_max_duration, num_steps + 1)
+
+    return duration_grid
+
+
 def main():
     return
 
