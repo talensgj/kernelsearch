@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from functools import partial
 from collections import namedtuple
@@ -6,12 +7,33 @@ import numpy as np
 from scipy import signal
 import multiprocessing as mp
 
-from kernelsearch import models
-from transitleastsquares import grid, tls_constants
+from astropy import constants
+
+from . import models, grid
+# from transitleastsquares import grid, tls_constants
 
 import matplotlib.pyplot as plt
 
+
+#############
+#  LOGGING  #
+#############
+
+logger = logging.getLogger(__name__)
+
+LOGDEBUG = logger.debug
+LOGINFO = logger.info
+LOGWARNING = logger.warning
+LOGERROR = logger.error
+LOGEXCEPTION = logger.exception
+
+
+###########
+# GLOBALS #
+###########
+
 SECINDAY = 24*3600
+SOLAR_DENSITY = (constants.M_sun/(4/3 * np.pi * constants.R_sun ** 3)).to('g/cm^3').value
 
 
 def evaluate_template(time,
@@ -30,174 +52,201 @@ def evaluate_template(time,
     return phase, flux
 
 
-def _get_duration_lims(period,
-                       R_star_min,
-                       R_star_max,
-                       M_star_min,
-                       M_star_max):
-
-    max_duration = grid.T14(
-        R_s=R_star_max,
-        M_s=M_star_max,
-        P=period,
-        small=False  # large planet for long transit duration
-    )
-
-    min_duration = grid.T14(
-        R_s=R_star_min,
-        M_s=M_star_min,
-        P=period,
-        small=True  # small planet for short transit duration
-    )
-
-    min_duration = min_duration*period
-    max_duration = max_duration*period
-
-    return min_duration, max_duration
-
-
-def get_duration_lims(periods,
-                      R_star_min,
-                      R_star_max,
-                      M_star_min,
-                      M_star_max):
-
-    min_duration0, max_duration0 = _get_duration_lims(np.amin(periods), R_star_min, R_star_max, M_star_min, M_star_max)
-    min_duration1, max_duration1 = _get_duration_lims(np.amax(periods), R_star_min, R_star_max, M_star_min, M_star_max)
-
-    min_duration = np.minimum(min_duration0, min_duration1)
-    max_duration = np.maximum(max_duration0, max_duration1)
-
-    return min_duration, max_duration
+# def _get_duration_lims(period,
+#                        R_star_min,
+#                        R_star_max,
+#                        M_star_min,
+#                        M_star_max):
+#
+#     max_duration = grid.T14(
+#         R_s=R_star_max,
+#         M_s=M_star_max,
+#         P=period,
+#         small=False  # large planet for long transit duration
+#     )
+#
+#     min_duration = grid.T14(
+#         R_s=R_star_min,
+#         M_s=M_star_min,
+#         P=period,
+#         small=True  # small planet for short transit duration
+#     )
+#
+#     min_duration = min_duration*period
+#     max_duration = max_duration*period
+#
+#     return min_duration, max_duration
 
 
-def _get_bin_size(min_duration,
-                  ref_period,
-                  ref_depth: float = 0.005,
-                  exp_time: Optional[float] = None,
-                  min_bin_size: float = 1 / (24 * 60),  # TODO are these good values?
-                  max_bin_size: float = 5 / (24 * 60),  # TODO are these good values?
-                  oversampling: int = 3):
-
-    if exp_time is None:
-        exp_time = 0.
-
-    # Compute the approriate bin_size.
-    axis = models.duration2axis(min_duration,
-                                ref_period,
-                                np.sqrt(ref_depth),
-                                0., 0., 90.)
-    full = models.axis2full(axis,
-                            ref_period,
-                            np.sqrt(ref_depth),
-                            0., 0., 90.)
-
-    ingress_time = (min_duration - full) / 2
-    ingress_time = np.maximum(ingress_time, exp_time)
-    bin_size = ingress_time / oversampling
-
-    if bin_size < min_bin_size:
-        bin_size = min_bin_size
-
-    if bin_size > max_bin_size:
-        bin_size = max_bin_size
-
-    return bin_size
+# def get_duration_lims(periods,
+#                       R_star_min,
+#                       R_star_max,
+#                       M_star_min,
+#                       M_star_max):
+#
+#     min_duration0, max_duration0 = _get_duration_lims(np.amin(periods), R_star_min, R_star_max, M_star_min, M_star_max)
+#     min_duration1, max_duration1 = _get_duration_lims(np.amax(periods), R_star_min, R_star_max, M_star_min, M_star_max)
+#
+#     min_duration = np.minimum(min_duration0, min_duration1)
+#     max_duration = np.maximum(max_duration0, max_duration1)
+#
+#     return min_duration, max_duration
 
 
-def _duration_grid(min_duration: float,
-                   max_duration: float,
-                   ref_period: float,
-                   ref_depth: float = 0.005,
-                   oversampling: float = 4):
-
-    duration = min_duration
-    duration_grid = [min_duration]
-    while duration < max_duration:
-        axis = models.duration2axis(duration,
-                                    ref_period,
-                                    np.sqrt(ref_depth),
-                                    0., 0., 90.)
-        full = models.axis2full(axis,
-                                ref_period,
-                                np.sqrt(ref_depth),
-                                0., 0., 90.)
-
-        # Increment by fractions of the previous transits ingress/egress.
-        duration_step = (duration - full) / oversampling
-        duration = duration + duration_step
-
-        if duration < max_duration:
-            duration_grid.append(duration)
-        else:
-            duration_grid.append(max_duration)
-
-    duration_grid = np.array(duration_grid)
-
-    return duration_grid
-
-
-def get_duration_grid(periods: np.ndarray,
-                      R_star_min: float,
-                      R_star_max: float,
-                      M_star_min: float,
-                      M_star_max: float,
-                      ref_depth: float = 0.005,
-                      exp_time: Optional[float] = None,
-                      min_bin_size: float = 1/(24*60),  # TODO are these good values?
-                      max_bin_size: float = 5/(24*60),  # TODO are these good values?
-                      oversampling_epoch: int = 3,
-                      oversampling_duration: float = 4):
-
-    ref_period = np.amax(periods)
-    min_duration, max_duration = get_duration_lims(periods, R_star_min, R_star_max, M_star_min, M_star_max)
-
-    bin_size = _get_bin_size(min_duration,
-                             ref_period,
-                             ref_depth=ref_depth,
-                             exp_time=exp_time,
-                             min_bin_size=min_bin_size,
-                             max_bin_size=max_bin_size,
-                             oversampling=oversampling_epoch)
-
-    duration_grid = _duration_grid(min_duration,
-                                   max_duration,
-                                   ref_period,
-                                   ref_depth=ref_depth,
-                                   oversampling=oversampling_duration)
-
-    return bin_size, duration_grid
+# def _get_epoch_step(min_duration,
+#                   ref_period,
+#                   ref_depth: float = 0.005,
+#                   exp_time: Optional[float] = None,
+#                   min_epoch_step: float = 1 / (24 * 60),  # TODO are these good values?
+#                   max_epoch_step: float = 5 / (24 * 60),  # TODO are these good values?
+#                   oversampling: int = 3):
+#
+#     if exp_time is None:
+#         exp_time = 0.
+#
+#     # Compute the approriate epoch step.
+#     axis = models.duration2axis(min_duration,
+#                                 ref_period,
+#                                 np.sqrt(ref_depth),
+#                                 0., 0., 90.)
+#     full = models.axis2full(axis,
+#                             ref_period,
+#                             np.sqrt(ref_depth),
+#                             0., 0., 90.)
+#
+#     ingress_time = (min_duration - full) / 2
+#     ingress_time = np.maximum(ingress_time, exp_time)
+#     epoch_step = ingress_time / oversampling
+#
+#     if epoch_step < min_epoch_step:
+#         epoch_step = min_epoch_step
+#
+#     if epoch_step > max_epoch_step:
+#         epoch_step = max_epoch_step
+#
+#     return epoch_step
 
 
-def make_period_groups(periods,
-                       exp_time,
-                       R_star_min,
-                       R_star_max,
-                       M_star_min,
-                       M_star_max,
-                       smooth_window=None,
-                       max_duty_cycle=0.15):
+# def _duration_grid(min_duration: float,
+#                    max_duration: float,
+#                    ref_period: float,
+#                    ref_depth: float = 0.005,
+#                    oversampling: float = 4):
+#
+#     duration = min_duration
+#     duration_grid = [min_duration]
+#     while duration < max_duration:
+#         axis = models.duration2axis(duration,
+#                                     ref_period,
+#                                     np.sqrt(ref_depth),
+#                                     0., 0., 90.)
+#         full = models.axis2full(axis,
+#                                 ref_period,
+#                                 np.sqrt(ref_depth),
+#                                 0., 0., 90.)
+#
+#         # Increment by fractions of the previous transits ingress/egress.
+#         duration_step = (duration - full) / oversampling
+#         duration = duration + duration_step
+#
+#         if duration < max_duration:
+#             duration_grid.append(duration)
+#         else:
+#             duration_grid.append(max_duration)
+#
+#     duration_grid = np.array(duration_grid)
+#
+#     return duration_grid
+
+
+# def get_duration_grid(periods: np.ndarray,
+#                       R_star_min: float,
+#                       R_star_max: float,
+#                       M_star_min: float,
+#                       M_star_max: float,
+#                       ref_depth: float = 0.005,
+#                       exp_time: Optional[float] = None,
+#                       min_epoch_step: float = 1/(24*60),  # TODO are these good values?
+#                       max_epoch_step: float = 5/(24*60),  # TODO are these good values?
+#                       oversampling_epoch: int = 3,
+#                       oversampling_duration: float = 4):
+#
+#     ref_period = np.amax(periods)
+#     min_duration, max_duration = get_duration_lims(periods, R_star_min, R_star_max, M_star_min, M_star_max)
+#
+#     epoch_step = _get_epoch_step(min_duration,
+#                              ref_period,
+#                              ref_depth=ref_depth,
+#                              exp_time=exp_time,
+#                              min_epoch_step=min_epoch_step,
+#                              max_epoch_step=max_epoch_step,
+#                              oversampling=oversampling_epoch)
+#
+#     duration_grid = _duration_grid(min_duration,
+#                                    max_duration,
+#                                    ref_period,
+#                                    ref_depth=ref_depth,
+#                                    oversampling=oversampling_duration)
+#
+#     return epoch_step, duration_grid
+
+
+# TODO This function needs to be reconsidered. The grouping is necessary to
+# TODO speed up computation time, but I'm not sure the current implementation
+# TODO is optimal.
+def make_period_groups(period_grid: np.ndarray,
+                       exp_time: float,
+                       duration_lims: grid.DurationLimits,
+                       max_duty_cycle: float = 0.20,
+                       smooth_window: Optional[float] = None
+                       ) -> list[tuple[int, int]]:
+    """ Split the full period range into groups to avoid cases
+        where the max duration exceeds the min period.
+
+    Parameters
+    period_grid: np.ndarray
+        The array of period values to be searched in days.
+    exp_time: float
+        The exposure time of the observation in days. It is added to the
+        transit durations to account for the smoothing effect of the
+        integrations.
+    max_duty_cycle: float
+        The maximum ratio of the max duration (+ exp_time) over the min period
+        within a period group.
+    smooth_window: float, optional
+        If given the second groups first period is choses so that it contains no
+        cases where the smooth window contain multiple transits.
+
+    Returns
+    -------
+    intervals: list[tuple[int, int]]
+        The indeces needed to slice period_grid into the appropriate groups.
+
+    """
 
     imin = 0
     intervals = []
     if smooth_window is not None:
         # Guaranteed baseline if this period is the start of a period group.
-        baseline = (1 - max_duty_cycle)*periods
+        baseline = (1 - max_duty_cycle)*period_grid
 
         # Index of shortest period with baseline > smooth_window
-        imin = np.searchsorted(baseline, smooth_window)
+        imin = np.searchsorted(baseline, smooth_window, side='right')
 
         if imin > 0:
             intervals = [(0, imin)]
 
-    for i, period in enumerate(periods):
-        min_duration, max_duration = _get_duration_lims(period, R_star_min, R_star_max, M_star_min, M_star_max)
-        if (max_duration + exp_time)/periods[imin] > max_duty_cycle:
+    for i, period in enumerate(period_grid):
+        if i < imin:
+            continue
+
+        max_duration = duration_lims.long[i]
+        if (max_duration + exp_time)/period_grid[imin] > max_duty_cycle:
             intervals.append((imin, i))
             imin = i
 
-    if imin != len(periods):
-        intervals.append((imin, len(periods)))
+    if imin != len(period_grid):
+        intervals.append((imin, len(period_grid)))
 
     return intervals
         
@@ -301,7 +350,7 @@ def _make_transit_templates(mid_times: np.ndarray,
 
 def make_template_grid(periods: np.ndarray,
                        duration_grid: np.ndarray,
-                       bin_size: float,
+                       epoch_step: float,
                        exp_time: float,
                        exp_cadence: float,
                        ld_type: str = 'linear',
@@ -330,7 +379,7 @@ def make_template_grid(periods: np.ndarray,
 
     baseline = min_period - max_duration - exp_time
     if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
-        print("Warning: Cannot make WLS templates for this period range, defaulting to TLS templates.")
+        LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
         search_mode = 'TLS'
 
     if search_mode in ['BLS', 'TLS']:
@@ -342,7 +391,7 @@ def make_template_grid(periods: np.ndarray,
         delta_time = np.minimum(delta_time, max_period)
 
     # Determine the times at which to evaluate the template.
-    nbins = np.ceil(delta_time/bin_size).astype('int')
+    nbins = np.ceil(delta_time/epoch_step).astype('int')
     template_edges = np.linspace(-delta_time/2, delta_time/2, nbins + 1)
     mid_times = (template_edges[:-1] + template_edges[1:])/2
 
@@ -388,13 +437,14 @@ def make_template_grid(periods: np.ndarray,
 
 
 def _search_period(period,
+                   min_duration,
+                   max_duration,
                    time,
                    weights_norm,
                    delta_flux_weighted,
                    flux_mean,
                    chisq0,
-                   bin_size,
-                   star_kwargs,
+                   epoch_step,
                    duration_grid,
                    templates,
                    min_points,
@@ -410,25 +460,22 @@ def _search_period(period,
                    ):
 
     # Select the durations that encompass the required range at this period.
-    min_duration, max_duration = _get_duration_lims(period, **star_kwargs)
-    imin = np.searchsorted(duration_grid, min_duration)
-    imax = np.searchsorted(duration_grid, max_duration)
-    imin = np.maximum(imin - 1, 0)
-    imax = np.minimum(imax, len(duration_grid))
+    jmin = np.searchsorted(duration_grid, min_duration, side='left')
+    jmax = np.searchsorted(duration_grid, max_duration, side='right')
 
-    min_points = min_points[imin:imax]
-    duration_grid = duration_grid[imin:imax]
+    min_points = min_points[jmin:jmax]
+    duration_grid = duration_grid[jmin:jmax]
 
     template_edges = templates[0]
-    template_models = templates[1][imin:imax]
-    template_square = templates[2][imin:imax]
-    template_count = templates[3][imin:imax]
+    template_models = templates[1][jmin:jmax]
+    template_square = templates[2][jmin:jmax]
+    template_count = templates[3][jmin:jmax]
 
     # At short periods WLS requires special treatment.
     if is_short_period:
         templates = make_template_grid(period,
                                        duration_grid,
-                                       bin_size,
+                                       epoch_step,
                                        exp_time,
                                        exp_cadence,
                                        ld_type=ld_type,
@@ -448,7 +495,7 @@ def _search_period(period,
     phase = np.mod(time/period, 1)
 
     # Create the phase bins.
-    num_bins = np.ceil(period/bin_size).astype('int')
+    num_bins = np.ceil(period/epoch_step).astype('int')
     bin_edges = np.linspace(0, 1, num_bins + 1)
 
     # Compute 'binned' quantities.
@@ -557,7 +604,7 @@ def _search_period(period,
     return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
-def _search_periods(periods, **kwargs):
+def _search_periods(periods, min_durations, max_durations, **kwargs):
     
     npoints = len(periods)
     power = np.zeros(npoints)
@@ -572,8 +619,8 @@ def _search_periods(periods, **kwargs):
 
     peak_power = -np.inf
     search_func = partial(_search_period, **kwargs)
-    for i, period in enumerate(periods):
-        result = search_func(period)
+    for i, (period, min_duration, max_duration) in enumerate(zip(periods, min_durations, max_durations)):
+        result = search_func(period, min_duration, max_duration)
 
         power[i] = result[0]
         dchisq_dec[i] = result[1]
@@ -591,7 +638,7 @@ def _search_periods(periods, **kwargs):
     return power, dchisq_dec, dchisq_inc, best_midpoint, best_duration, best_depth, best_flux_level, best_edges, best_model
 
 
-def _search_periods_with_pool(num_processes, periods, **kwargs):
+def _search_periods_with_pool(num_processes, periods, min_durations, max_durations, **kwargs):
     
     npoints = len(periods)
     power = np.zeros(npoints)
@@ -609,8 +656,8 @@ def _search_periods_with_pool(num_processes, periods, **kwargs):
     with mp.Pool(processes=num_processes) as pool:
         
         i = 0
-        period_chunks = [periods[i::num_processes] for i in range(num_processes)]
-        for result in pool.imap(search_func, period_chunks):
+        period_chunks = [(periods[i::num_processes], min_durations[i::num_processes], max_durations[i::num_processes]) for i in range(num_processes)]
+        for result in pool.starmap(search_func, period_chunks):
             power[i::num_processes] = result[0]
             dchisq_dec[i::num_processes] = result[1]
             dchisq_inc[i::num_processes] = result[2]
@@ -667,24 +714,29 @@ def _prepare_lightcurve(flux: np.ndarray,
 def template_lstsq(time: np.ndarray,
                    flux: np.ndarray,
                    flux_err: np.ndarray,
-                   periods: np.ndarray,
                    exp_time: float,
                    exp_cadence: float,
-                   R_star_min: float = tls_constants.R_STAR_MIN,
-                   R_star_max: float = tls_constants.R_STAR_MAX,
-                   M_star_min: float = tls_constants.M_STAR_MIN,
-                   M_star_max: float = tls_constants.M_STAR_MAX,
+                   min_stellar_radius: float,
+                   max_stellar_radius: float,
+                   min_stellar_mass: float,
+                   max_stellar_mass: float,
+                   min_transits: int = 3,
+                   min_separation: float = 3.,
+                   period_sampling: int = 3,
+                   min_period: Optional[float] = None,
+                   max_period: Optional[float] = None,
+                   epoch_sampling: int = 20,
+                   min_epoch_step: float = 60/SECINDAY,
+                   max_epoch_step: float = 300/SECINDAY,
+                   circular_orbits: bool = True,
+                   frac_duration_step: float = 1.05,
+                   normalisation: str = 'normal',
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
                    search_mode: str = 'TLS',
                    short_periods: str = 'skip',
-                   normalisation: str = 'normal',
                    smooth_window: Optional[float] = None,
                    smooth_weights: str = 'uniform',
-                   min_bin_size: float = 1 / (24 * 60),
-                   max_bin_size: float = 5 / (24 * 60),
-                   oversampling_epoch: int = 3,
-                   oversampling_duration: float = 4,
                    max_duty_cycle: float = 0.2,
                    num_processes: Optional[int] = None
                    ) -> SearchResult:
@@ -704,7 +756,7 @@ def template_lstsq(time: np.ndarray,
         raise ValueError(errmsg)
 
     if search_mode != 'WLS' and smooth_window is not None:
-        print(f'Warning: performing {search_mode} search, setting smooth_window to None.')
+        LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
         smooth_window = None
 
     if normalisation not in ['normal', 'dec_minus_inc']:
@@ -715,53 +767,75 @@ def template_lstsq(time: np.ndarray,
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
-    # Make sure period grid is sorted.
-    periods = np.sort(periods)
-
-    # Pre-compute some arrays.
+    # Pre-compute some arrays from the lightcurves.
     result = _prepare_lightcurve(flux, flux_err)
     weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
 
-    # Group the periods for re-computing the kernels.
-    period_groups = make_period_groups(periods,
+    # Compute stellar densities from the stellar mass and radii ranges.
+    min_stellar_density = SOLAR_DENSITY * min_stellar_mass / max_stellar_radius ** 3
+    max_stellar_density = SOLAR_DENSITY * max_stellar_mass / min_stellar_radius ** 3
+    stellar_density_bounds = (min_stellar_density, max_stellar_density)
+    stellar_radius_bounds = (max_stellar_radius, min_stellar_radius)  # The max radius goes first because it matches the minimum density.
+
+    # Compute the period grid to search.
+    period_grid = grid.get_period_grid(max_stellar_density,
+                                       np.ptp(time),
+                                       min_period=min_period,
+                                       max_period=max_period,
+                                       oversampling=period_sampling,
+                                       min_transits=min_transits,
+                                       min_separation=min_separation)
+
+    LOGINFO(f"Searching {len(period_grid)} periods between {period_grid[0]:.3f} days and {period_grid[-1]:.3f} days.")
+
+    # Compute the duration limits as a function of orbital period.
+    duration_lims, _, _ = grid.get_transit_duration_limits(period_grid,
+                                                           stellar_density_bounds,
+                                                           stellar_radius_bounds,
+                                                           min_separation=min_separation,
+                                                           circular_orbits=circular_orbits)
+
+    # Compute the duration grid based on the duration limits.
+    min_duration = np.amin(duration_lims.short)
+    max_duration = np.amax(duration_lims.long)
+    duration_grid = grid.get_transit_duration_grid(min_duration,
+                                                   max_duration,
+                                                   frac_duration_step=frac_duration_step)
+
+    LOGINFO(f"Searching {len(duration_grid)} durations between {duration_grid[0]:.2f} days and {duration_grid[-1]:.2f} days.")
+
+    # Compute the period groups.
+    period_groups = make_period_groups(period_grid,
                                        exp_time,
-                                       R_star_min,
-                                       R_star_max,
-                                       M_star_min,
-                                       M_star_max,
-                                       smooth_window=smooth_window,
-                                       max_duty_cycle=max_duty_cycle)
+                                       duration_lims,
+                                       max_duty_cycle=max_duty_cycle,
+                                       smooth_window=smooth_window)
 
     ngroups = len(period_groups)
-    bin_sizes = np.zeros(ngroups)
-    durations = np.array([])
+    epoch_steps = np.zeros(ngroups)
     duration_groups = np.zeros_like(period_groups)
     for group in range(ngroups):
 
         imin, imax = period_groups[group]
-        period_grid = periods[imin:imax]
 
-        # Get the duration grid for the current period group.
-        bin_size, duration_grid = get_duration_grid(period_grid,
-                                                    R_star_min,
-                                                    R_star_max,
-                                                    M_star_min,
-                                                    M_star_max,
-                                                    exp_time=exp_time,
-                                                    min_bin_size=min_bin_size,
-                                                    max_bin_size=max_bin_size,
-                                                    oversampling_epoch=oversampling_epoch,
-                                                    oversampling_duration=oversampling_duration)
+        min_duration = np.amin(duration_lims.short[imin:imax])
+        max_duration = np.amax(duration_lims.long[imin:imax])
 
-        bin_sizes[group] = bin_size
-        duration_groups[group, 0] = durations.size
-        durations = np.concatenate([durations, duration_grid])
-        duration_groups[group, 1] = durations.size
+        jmin = np.searchsorted(duration_grid, min_duration, side='left')
+        jmax = np.searchsorted(duration_grid, max_duration, side='right')
+
+        duration_groups[group, 0] = jmin
+        duration_groups[group, 1] = jmax
+
+        epoch_steps[group] = grid.get_epoch_step(min_duration,
+                                                 epoch_sampling=epoch_sampling,
+                                                 min_epoch_step=min_epoch_step,
+                                                 max_epoch_step=max_epoch_step)
 
     # Set up variables for the output.
-    power = np.zeros_like(periods)
-    dchisq_dec = np.zeros_like(periods)
-    dchisq_inc = np.zeros_like(periods)
+    power = np.zeros_like(period_grid)
+    dchisq_dec = np.zeros_like(period_grid)
+    dchisq_inc = np.zeros_like(period_grid)
     best_period = np.nan
     best_midpoint = np.nan
     best_duration = np.nan
@@ -770,33 +844,42 @@ def template_lstsq(time: np.ndarray,
 
     for group in range(ngroups):
 
-        bin_size = bin_sizes[group]
+        LOGDEBUG(f"Period group {group + 1} of {ngroups}:")
+
+        epoch_step = epoch_steps[group]
 
         imin, imax = period_groups[group]
-        period_grid = periods[imin:imax]
+        period_group = period_grid[imin:imax]
+
+        min_durations = duration_lims.short[imin:imax]
+        max_durations = duration_lims.long[imin:imax]
 
         jmin, jmax = duration_groups[group]
-        duration_grid = durations[jmin:jmax]
+        duration_group = duration_grid[jmin:jmax]
 
         search_mode_ = search_mode
         is_short_period = False
-        baseline = np.amin(period_grid) - np.amax(duration_grid) - exp_time
+        baseline = np.amin(period_group) - np.amax(duration_group) - exp_time
         if search_mode == 'WLS' and baseline < smooth_window:
             if short_periods == 'skip':
-                print('Skipping short periods in WLS search.')
+                LOGINFO("  Skipping short periods in WLS search.")
                 continue
             if short_periods == 'TLS':
                 search_mode_ = 'TLS'
-                print('Using TLS templates for short periods in WLS search.')
+                LOGINFO("  Using TLS templates for short periods in WLS search.")
             if short_periods == 'WLS':
                 search_mode_ = 'TLS'
                 is_short_period = True
-                print('Using WLS templates for short periods in WLS search.')
+                LOGINFO("  Using WLS templates for short periods in WLS search.")
+
+        LOGDEBUG(f"  Searching {len(period_group)} periods between {period_group[0]:.3f} days to {period_group[-1]:.3f} days.")
+        LOGDEBUG(f"  Searching {len(duration_group)} durations between {duration_group[0]:.2f} days and {duration_group[-1]:.2f} days.")
+        LOGDEBUG(f"  Searching using an epoch step of {epoch_step * SECINDAY / 60:.1f} minutes.")
 
         # Compute the template models for the current period set.
-        templates = make_template_grid(period_grid,
-                                       duration_grid,
-                                       bin_size,
+        templates = make_template_grid(period_group,
+                                       duration_group,
+                                       epoch_step,
                                        exp_time,
                                        exp_cadence,
                                        ld_type=ld_type,
@@ -811,14 +894,10 @@ def template_lstsq(time: np.ndarray,
         kwargs['delta_flux_weighted'] = delta_flux_weighted
         kwargs['flux_mean'] = flux_mean
         kwargs['chisq0'] = chisq0
-        kwargs['bin_size'] = bin_size
-        kwargs['star_kwargs'] = {'R_star_min': R_star_min,
-                                 'R_star_max': R_star_max,
-                                 'M_star_min': M_star_min,
-                                 'M_star_max': M_star_max}
-        kwargs['duration_grid'] = duration_grid
+        kwargs['epoch_step'] = epoch_step
+        kwargs['duration_grid'] = duration_group
         kwargs['templates'] = templates
-        kwargs['min_points'] = 0.5*duration_grid/exp_cadence
+        kwargs['min_points'] = 0.5*duration_group/exp_cadence
         kwargs['is_short_period'] = is_short_period
         kwargs['normalisation'] = normalisation
         kwargs['smooth_window'] = smooth_window
@@ -829,9 +908,9 @@ def template_lstsq(time: np.ndarray,
         kwargs['ld_pars'] = ld_pars
 
         if num_processes is None:
-            result = _search_periods(period_grid, **kwargs)
+            result = _search_periods(period_group, min_durations, max_durations, **kwargs)
         else:
-            result = _search_periods_with_pool(num_processes, period_grid, **kwargs)
+            result = _search_periods_with_pool(num_processes, period_group, min_durations, max_durations, **kwargs)
 
         power[imin:imax] = result[0]
         dchisq_dec[imin:imax] = result[1]
@@ -839,7 +918,7 @@ def template_lstsq(time: np.ndarray,
 
         ipeak = np.argmax(power)
         if ipeak >= imin:
-            best_period = periods[ipeak]
+            best_period = period_grid[ipeak]
             best_midpoint = result[3][ipeak - imin]
             best_duration = result[4][ipeak - imin]
             best_depth = result[5][ipeak - imin]
@@ -856,9 +935,9 @@ def template_lstsq(time: np.ndarray,
                                                 best_template_edges,
                                                 best_template_model)
 
-    search_result = SearchResult(periods=periods,
+    search_result = SearchResult(periods=period_grid,
                                  period_groups=period_groups,
-                                 durations=durations,
+                                 durations=duration_grid,
                                  duration_groups=duration_groups,
                                  power=power,
                                  chisq0=chisq0*weights_sum,
