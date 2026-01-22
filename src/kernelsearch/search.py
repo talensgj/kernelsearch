@@ -619,7 +619,7 @@ def _search_period(period,
     flux_level_vals = np.full(nvals, np.nan)
     flux_level_vals[jmin:jmax] = flux_level_vals_
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, templates
+    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals
 
 
 def _search_periods(periods, min_durations, max_durations, **kwargs):
@@ -644,7 +644,7 @@ def _search_periods(periods, min_durations, max_durations, **kwargs):
         depth_vals[i] = result[4]
         flux_level_vals[i] = result[5]
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_edges, best_model
+    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals
 
 
 def _search_periods_with_pool(num_processes, periods, min_durations, max_durations, **kwargs):
