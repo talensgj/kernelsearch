@@ -986,7 +986,7 @@ def template_lstsq(time: np.ndarray,
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
 
     result = _1d_periodogram(power, dchisq_dec, dchisq_inc, midpoint_vals, duration_grid, depth_vals, flux_level_vals, duration_circ)
-    power_circ, dchisq_dec_circ, dchisq_inc_circ, midpoint_vals_circ, duration_vals_circ, depth_vals_circ, flux_level_vals_circ = result
+    power_circ, dchisq_dec_circ, dchisq_inc_circ, midpoint_vals_circ, depth_vals_circ, duration_vals_circ, flux_level_vals_circ = result
 
     # Create status flags.
     status_flag = np.zeros_like(period_grid, dtype='uint8')
@@ -1034,7 +1034,7 @@ def template_lstsq(time: np.ndarray,
         search_result_full = None
     else:
         result = _1d_periodogram(power, dchisq_dec, dchisq_inc, midpoint_vals, duration_grid, depth_vals, flux_level_vals, duration_full)
-        power_full, dchisq_dec_full, dchisq_inc_full, midpoint_vals_full, duration_vals_full, depth_vals_full, flux_level_vals_full = result
+        power_full, dchisq_dec_full, dchisq_inc_full, midpoint_vals_full, depth_vals_full, duration_vals_full, flux_level_vals_full = result
 
         # Create status flags for each point in the full periodogram.
         status_flag = np.zeros_like(period_grid, dtype='uint8')
