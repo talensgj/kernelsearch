@@ -3,6 +3,7 @@ from typing import Optional
 from functools import partial
 from dataclasses import dataclass
 from collections import namedtuple
+from timeit import default_timer as timer
 
 import numpy as np
 from scipy import signal
@@ -210,6 +211,18 @@ class PeriodGroup:
         return duration_grid[jmin:jmax]
 
 
+def get_duration_idx(duration_grid: np.ndarray,
+                     duration_lims: tuple[float, float],
+                     ) -> tuple[int, int]:
+
+    min_duration, max_duration = duration_lims
+
+    jmin = np.searchsorted(duration_grid, min_duration, side='left')
+    jmax = np.searchsorted(duration_grid, max_duration, side='right')
+
+    return jmin, jmax
+
+
 # TODO This function needs to be reconsidered. The grouping is necessary to
 # TODO speed up computation time, but I'm not sure the current implementation
 # TODO is optimal.
@@ -280,8 +293,7 @@ def make_period_groups(period_grid: np.ndarray,
         min_duration = np.amin(duration_lims.short[imin:imax])
         max_duration = np.amax(duration_lims.long[imin:imax])
 
-        jmin = np.searchsorted(duration_grid, min_duration, side='left')
-        jmax = np.searchsorted(duration_grid, max_duration, side='right')
+        jmin, jmax = get_duration_idx(duration_grid, (min_duration, max_duration))
 
         epoch_step = grid.get_epoch_step(min_duration,
                                          epoch_sampling=epoch_sampling,
@@ -480,8 +492,8 @@ def make_template_grid(periods: np.ndarray,
 
 
 def _search_period(period,
-                   min_duration,
-                   max_duration,
+                   duration_lims_circ,
+                   duration_lims_full,
                    time,
                    weights_norm,
                    delta_flux_weighted,
@@ -502,19 +514,18 @@ def _search_period(period,
                    debug=False
                    ):
 
-    nvals = duration_grid.size
+    # nvals = duration_grid.size
 
     # Select the durations that encompass the required range at this period.
-    jmin = np.searchsorted(duration_grid, min_duration, side='left')
-    jmax = np.searchsorted(duration_grid, max_duration, side='right')
+    # jmin, jmax = get_duration_idx(duration_grid, duration_lims_full)
 
-    min_points = min_points[jmin:jmax]
-    duration_grid = duration_grid[jmin:jmax]
+    # min_points = min_points[jmin:jmax]
+    # duration_grid = duration_grid[jmin:jmax]
 
     template_edges = templates[0]
-    template_models = templates[1][jmin:jmax]
-    template_square = templates[2][jmin:jmax]
-    template_count = templates[3][jmin:jmax]
+    template_models = templates[1]#[jmin:jmax]
+    template_square = templates[2]#[jmin:jmax]
+    template_count = templates[3]#[jmin:jmax]
 
     # At short periods WLS requires special treatment.
     if is_short_period:
@@ -644,28 +655,48 @@ def _search_period(period,
     depth_vals_ = depth[irow, icol]
     flux_level_vals_ = flux_mean - depth_vals_ * gamma[irow, icol]
 
-    power = np.full(nvals, np.nan)
-    power[jmin:jmax] = power_
+    # power = np.full(nvals, np.nan)
+    # power[jmin:jmax] = power_
+    #
+    # dchisq_dec = np.full(nvals, np.nan)
+    # dchisq_dec[jmin:jmax] = dchisq_dec_
+    #
+    # dchisq_inc = np.full(nvals, np.nan)
+    # dchisq_inc[jmin:jmax] = dchisq_inc_
+    #
+    # midpoint_vals = np.full(nvals, np.nan)
+    # midpoint_vals[jmin:jmax] = midpoint_vals_
+    #
+    # depth_vals = np.full(nvals, np.nan)
+    # depth_vals[jmin:jmax] = depth_vals_
+    #
+    # flux_level_vals = np.full(nvals, np.nan)
+    # flux_level_vals[jmin:jmax] = flux_level_vals_
 
-    dchisq_dec = np.full(nvals, np.nan)
-    dchisq_dec[jmin:jmax] = dchisq_dec_
+    power = power_
+    dchisq_dec = dchisq_dec_
+    dchisq_inc = dchisq_inc_
+    midpoint_vals = midpoint_vals_
+    depth_vals = depth_vals_
+    flux_level_vals = flux_level_vals_
 
-    dchisq_inc = np.full(nvals, np.nan)
-    dchisq_inc[jmin:jmax] = dchisq_inc_
+    jmin, jmax = get_duration_idx(duration_grid, duration_lims_circ)
+    arg = np.argmax(power[jmin:jmax])
+    best_power_circ = power[jmin + arg]
+    best_model_circ = template_models[jmin + arg]
 
-    midpoint_vals = np.full(nvals, np.nan)
-    midpoint_vals[jmin:jmax] = midpoint_vals_
+    jmin, jmax = get_duration_idx(duration_grid, duration_lims_full)
+    arg = np.argmax(power[jmin:jmax])
+    best_power_full = power[jmin + arg]
+    best_model_full = template_models[jmin + arg]
 
-    depth_vals = np.full(nvals, np.nan)
-    depth_vals[jmin:jmax] = depth_vals_
+    best_vals_circ = (best_power_circ, template_edges, best_model_circ)
+    best_vals_full = (best_power_full, template_edges, best_model_full)
 
-    flux_level_vals = np.full(nvals, np.nan)
-    flux_level_vals[jmin:jmax] = flux_level_vals_
-
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals
+    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
-def _search_periods(periods, min_durations, max_durations, **kwargs):
+def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     
     nrows = len(periods)
     ncols = len(kwargs['duration_grid'])
@@ -676,9 +707,18 @@ def _search_periods(periods, min_durations, max_durations, **kwargs):
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
 
+    best_power_circ = -np.inf
+    best_edges_circ = None
+    best_model_circ = None
+
+    best_power_full = -np.inf
+    best_edges_full = None
+    best_model_full = None
+
     search_func = partial(_search_period, **kwargs)
-    for i, (period, min_duration, max_duration) in enumerate(zip(periods, min_durations, max_durations)):
-        result = search_func(period, min_duration, max_duration)
+    for i, period in enumerate(periods):
+
+        result = search_func(period, duration_lims_circ[i], duration_lims_full[i])
 
         power[i] = result[0]
         dchisq_dec[i] = result[1]
@@ -687,10 +727,26 @@ def _search_periods(periods, min_durations, max_durations, **kwargs):
         depth_vals[i] = result[4]
         flux_level_vals[i] = result[5]
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals
+        (power_circ, edges_circ, model_circ) = result[6]
+        (power_full, edges_full, model_full) = result[7]
+
+        if power_circ > best_power_circ:
+            best_power_circ = power_circ
+            best_edges_circ = edges_circ
+            best_model_circ = model_circ
+
+        if power_full > best_power_full:
+            best_power_full = power_full
+            best_edges_full = edges_full
+            best_model_full = model_full
+
+    best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
+    best_vals_full = (best_power_full, best_edges_full, best_model_full)
+
+    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
-def _search_periods_with_pool(num_processes, periods, min_durations, max_durations, **kwargs):
+def _search_periods_with_pool(num_processes, periods, duration_lims_circ, duration_lims_full, **kwargs):
 
     nrows = len(periods)
     ncols = len(kwargs['duration_grid'])
@@ -701,12 +757,29 @@ def _search_periods_with_pool(num_processes, periods, min_durations, max_duratio
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
 
+    best_power_circ = -np.inf
+    best_edges_circ = None
+    best_model_circ = None
+
+    best_power_full = -np.inf
+    best_edges_full = None
+    best_model_full = None
+
     search_func = partial(_search_periods, **kwargs)
     with mp.Pool(processes=num_processes) as pool:
-        
+
+        period_chunks = []
+        for i in range(num_processes):
+
+            periods_ = periods[i::num_processes]
+            duration_lims_circ_ = duration_lims_circ[i::num_processes]
+            duration_lims_full_ = duration_lims_full[i::num_processes]
+
+            period_chunks.append((periods_, duration_lims_circ_, duration_lims_full_))
+
         i = 0
-        period_chunks = [(periods[i::num_processes], min_durations[i::num_processes], max_durations[i::num_processes]) for i in range(num_processes)]
         for result in pool.starmap(search_func, period_chunks):
+
             power[i::num_processes, :] = result[0]
             dchisq_dec[i::num_processes, :] = result[1]
             dchisq_inc[i::num_processes, :] = result[2]
@@ -714,9 +787,25 @@ def _search_periods_with_pool(num_processes, periods, min_durations, max_duratio
             depth_vals[i::num_processes, :] = result[4]
             flux_level_vals[i::num_processes, :] = result[5]
 
+            (power_circ, edges_circ, model_circ) = result[6]
+            (power_full, edges_full, model_full) = result[7]
+
+            if power_circ > best_power_circ:
+                best_power_circ = power_circ
+                best_edges_circ = edges_circ
+                best_model_circ = model_circ
+
+            if power_full > best_power_full:
+                best_power_full = power_full
+                best_edges_full = edges_full
+                best_model_full = model_full
+
             i += 1
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals
+    best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
+    best_vals_full = (best_power_full, best_edges_full, best_model_full)
+
+    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 SearchResult = namedtuple('lstsq_result',
@@ -759,7 +848,8 @@ def _prepare_lightcurve(flux: np.ndarray,
     return weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0
 
 
-def _1d_periodogram(period_grid: np.ndarray,
+def _1d_periodogram(time,
+                    period_grid: np.ndarray,
                     duration_grid: np.ndarray,
                     period_groups: list[PeriodGroup],
                     power: np.ndarray,
@@ -769,6 +859,7 @@ def _1d_periodogram(period_grid: np.ndarray,
                     midpoint_vals: np.ndarray,
                     depth_vals: np.ndarray,
                     flux_level_vals: np.ndarray,
+                    best_template_vals: tuple,
                     duration_lims: grid.DurationLimits,
                     duration_circ: Optional[grid.DurationLimits] = None
                     ) -> SearchResult:
@@ -822,6 +913,15 @@ def _1d_periodogram(period_grid: np.ndarray,
     best_depth = depth_vals[ipeak]
     best_flux_level = flux_level_vals[ipeak]
 
+    _, template_edges, template_model = best_template_vals
+    model_phase, model_flux = evaluate_template(time,
+                                                best_period,
+                                                best_midpoint,
+                                                best_depth,
+                                                best_flux_level,
+                                                template_edges,
+                                                template_model)
+
     # Save the final periodogram.
     search_result = SearchResult(periods=period_grid,
                                  period_groups=[group.period_idx for group in period_groups],
@@ -841,8 +941,8 @@ def _1d_periodogram(period_grid: np.ndarray,
                                  best_duration=best_duration,
                                  best_depth=best_depth,
                                  best_flux_level=best_flux_level,
-                                 model_phase=None,  # TODO restore these somehow.
-                                 model_flux=None)
+                                 model_phase=model_phase,
+                                 model_flux=model_flux)
 
     return search_result
 
@@ -975,8 +1075,18 @@ def template_lstsq(time: np.ndarray,
     depth_vals = np.full((nrows, ncols), fill_value=np.nan)
     flux_level_vals = np.full((nrows, ncols), fill_value=np.nan)
 
+    best_power_circ = -np.inf
+    best_edges_circ = None
+    best_model_circ = None
+
+    best_power_full = -np.inf
+    best_edges_full = None
+    best_model_full = None
+
+    tottime = 0
     ngroups = len(period_groups)
     for idx, group in enumerate(period_groups):
+        start_time = timer()
 
         LOGDEBUG(f"Period group {idx + 1} of {ngroups}:")
 
@@ -987,8 +1097,8 @@ def template_lstsq(time: np.ndarray,
         period_group = group.get_period_group(period_grid)
         duration_group = group.get_duration_group(duration_grid)
 
-        min_durations = duration_lims.short[imin:imax]
-        max_durations = duration_lims.long[imin:imax]
+        duration_lims_circ = np.column_stack((duration_circ.short[imin:imax], duration_circ.long[imin:imax]))
+        duration_lims_full = np.column_stack((duration_lims.short[imin:imax], duration_lims.long[imin:imax]))
 
         search_mode_ = search_mode
         is_short_period = False
@@ -1043,9 +1153,9 @@ def template_lstsq(time: np.ndarray,
         kwargs['ld_pars'] = ld_pars
 
         if num_processes is None:
-            result = _search_periods(period_group, min_durations, max_durations, **kwargs)
+            result = _search_periods(period_group, duration_lims_full, duration_lims_circ, **kwargs)
         else:
-            result = _search_periods_with_pool(num_processes, period_group, min_durations, max_durations, **kwargs)
+            result = _search_periods_with_pool(num_processes, period_group, duration_lims_full, duration_lims_circ, **kwargs)
 
         power[imin:imax, jmin:jmax] = result[0]
         dchisq_dec[imin:imax, jmin:jmax] = result[1]
@@ -1053,6 +1163,28 @@ def template_lstsq(time: np.ndarray,
         midpoint_vals[imin:imax, jmin:jmax] = result[3]
         depth_vals[imin:imax, jmin:jmax] = result[4]
         flux_level_vals[imin:imax, jmin:jmax] = result[5]
+
+        (power_circ, edges_circ, model_circ) = result[6]
+        (power_full, edges_full, model_full) = result[7]
+
+        if power_circ > best_power_circ:
+            best_power_circ = power_circ
+            best_edges_circ = edges_circ
+            best_model_circ = model_circ
+
+        if power_full > best_power_full:
+            best_power_full = power_full
+            best_edges_full = edges_full
+            best_model_full = model_full
+
+        runtime = timer() - start_time
+        tottime += runtime
+        LOGDEBUG(f"  Period group searched in {runtime:.1f} seconds.")
+
+    LOGINFO(f"Full search completed in {tottime:.1f} seconds.")
+
+    best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
+    best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
     # Multiply chi-square values with weights_sum.
     chisq0 *= weights_sum
@@ -1063,7 +1195,8 @@ def template_lstsq(time: np.ndarray,
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
 
     # Generate the final periodogram for circular orbits.
-    search_result_circ = _1d_periodogram(period_grid,
+    search_result_circ = _1d_periodogram(time,
+                                         period_grid,
                                          duration_grid,
                                          period_groups,
                                          power,
@@ -1073,6 +1206,7 @@ def template_lstsq(time: np.ndarray,
                                          midpoint_vals,
                                          depth_vals,
                                          flux_level_vals,
+                                         best_vals_circ,
                                          duration_lims=duration_circ)
 
     if diagnostic_plots:
@@ -1081,7 +1215,8 @@ def template_lstsq(time: np.ndarray,
     # Generate the final peridogram for the full duration range.
     search_result_full = None
     if not circular_orbits:
-        search_result_full = _1d_periodogram(period_grid,
+        search_result_full = _1d_periodogram(time,
+                                             period_grid,
                                              duration_grid,
                                              period_groups,
                                              power,
@@ -1091,6 +1226,7 @@ def template_lstsq(time: np.ndarray,
                                              midpoint_vals,
                                              depth_vals,
                                              flux_level_vals,
+                                             best_vals_full,
                                              duration_lims=duration_full,
                                              duration_circ=duration_circ)
 
