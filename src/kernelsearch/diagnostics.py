@@ -3,45 +3,56 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def plot_1d_periodogram(periodogram):
+def plot_1d_periodogram(periodogram,
+                        duration_circ,
+                        duration_full):
 
     plt.figure(figsize=(12, 15))
 
-    plt.subplot(611, xscale='log')
+    ax = plt.subplot(611, xscale='log')
 
     plt.plot(periodogram.periods, periodogram.power)
 
     plt.ylabel('Power')
 
-    plt.subplot(612, xscale='log')
+    plt.subplot(612, sharex=ax)
 
-    plt.plot(periodogram.periods, periodogram.dchisq_dec)
-    plt.plot(periodogram.periods, periodogram.dchisq_inc)
+    plt.plot(periodogram.periods, periodogram.dchisq_dec, label=r'$\Delta\chi^2_{-}$')
+    plt.plot(periodogram.periods, periodogram.dchisq_inc, label=r'$\Delta\chi^2_{+}$')
 
-    plt.ylabel('dchisq')
+    plt.legend()
+    plt.ylabel(r'$\Delta\chi^2$')
 
-    plt.subplot(613, xscale='log')
+    plt.subplot(613, sharex=ax)
     plt.plot(periodogram.periods, periodogram.midpoint/periodogram.periods)
 
     plt.ylabel('Phase')
 
-    plt.subplot(614, xscale='log')
+    plt.subplot(614, yscale='log', sharex=ax)
 
     plt.plot(periodogram.periods, periodogram.duration)
 
-    plt.ylabel('Duration')
+    plt.plot(periodogram.periods, duration_full.short, c='k')
+    plt.plot(periodogram.periods, duration_full.long, c='k')
 
-    plt.subplot(615, xscale='log')
+    plt.plot(periodogram.periods, duration_circ.short, c='k', ls='--')
+    plt.plot(periodogram.periods, duration_circ.long, c='k', ls='--')
 
-    plt.plot(periodogram.periods, periodogram.depth)
+    plt.ylabel('Duration [days]')
 
-    plt.ylabel('Depth')
+    plt.subplot(615, sharex=ax)
 
-    plt.subplot(616, xscale='log')
+    plt.plot(periodogram.periods, 1e6 * periodogram.depth)
 
-    plt.plot(periodogram.periods, periodogram.flux_level)
+    plt.ylabel('Depth [ppm]')
 
-    plt.ylabel('Flux Level')
+    plt.subplot(616, sharex=ax)
+
+    plt.plot(periodogram.periods, 1e6 * (periodogram.flux_level - 1))
+
+    plt.xlim(periodogram.periods[0], periodogram.periods[-1])
+
+    plt.ylabel('Flux Level - 1 [ppm]')
 
     plt.tight_layout()
     plt.show()
