@@ -495,16 +495,15 @@ def get_transit_duration_grid(min_duration: float,
         msg = f"The maximum duration is less than the minimum duration, please fix your inputs."
         raise ValueError(msg)
 
-    # Compute the logs of the min and max transit duration.
-    log_min_duration = np.log10(min_duration)
-    log_max_duration = np.log10(max_duration)
-
     # Compute the number of steps needed in the log-spaced grid.
-    num_steps = (log_max_duration - log_min_duration)/np.log10(frac_duration_step)
-    num_steps = np.ceil(num_steps).astype('int')
+    steps = np.log10(max_duration/min_duration)/np.log10(frac_duration_step)
+    num_steps = np.floor(steps).astype('int')
+    remainder = steps - num_steps
 
     # Evaluate the log-spaced duration grid.
     duration_grid = np.logspace(log_min_duration, log_max_duration, num_steps + 1)
+    power = np.arange(num_steps + 1) + remainder / 2
+    duration_grid = min_duration * frac_duration_step ** power
 
     return duration_grid
 
