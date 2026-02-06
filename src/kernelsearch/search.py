@@ -1236,6 +1236,7 @@ def template_lstsq(time: np.ndarray,
     chisq0 *= weights_sum
     dchisq_dec *= weights_sum
     dchisq_inc *= weights_sum
+    midpoint_vals = np.mod(midpoint_vals, period_grid[:, np.newaxis])
 
     if DEBUG:
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
