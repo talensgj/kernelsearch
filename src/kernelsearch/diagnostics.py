@@ -1,5 +1,7 @@
 import numpy as np
 
+from . import grid
+
 import matplotlib.pyplot as plt
 
 
@@ -147,6 +149,82 @@ def plot_2d_periodogram(period_grid,
 
     plt.xlabel('Period [days]')
     plt.ylabel('Duration [days]')
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    return
+
+
+def plot_oot_baseline(period_grid: np.ndarray,
+                      baseline: np.ndarray,
+                      smooth_window: float):
+    """ Make a figure showing the OoT baseline.
+    """
+
+    plt.figure(figsize=(8, 5))
+
+    plt.subplot(111)
+
+    plt.plot(period_grid, baseline)
+
+    plt.axhline(smooth_window, c='k')
+
+    plt.xlim(period_grid[0], 2 * smooth_window)
+    plt.ylim(0, 2 * smooth_window)
+
+    plt.xlabel('Period [days]')
+    plt.ylabel('OoT Baseline [days]')
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    return
+
+
+def plot_period_groups(period_grid: np.ndarray,
+                       duration_lims: grid.DurationLimits,
+                       intervals: list[tuple[int, int]],
+                       icut: int):
+    """ Make a figure showing the period groups.
+    """
+
+    plt.figure(figsize=(8, 5))
+
+    ax = plt.subplot(211, xscale='log', yscale='log')
+
+    plt.fill_between(period_grid, duration_lims.short, duration_lims.long, edgecolor='grey', alpha=0.5)
+
+    for imin, imax in intervals:
+        if imin == 0: continue
+
+        if imin == icut:
+            plt.axvline(period_grid[imin], c='r')
+        else:
+            plt.axvline(period_grid[imin], c='k')
+
+    plt.xlabel('Period [days]')
+    plt.ylabel('Duration [days]')
+
+    plt.subplot(212, xscale='log', yscale='log', sharex=ax)
+
+    plt.fill_between(period_grid, duration_lims.short / period_grid, duration_lims.long / period_grid, edgecolor='grey',
+                     alpha=0.5)
+
+    for imin, imax in intervals:
+        if imin == 0: continue
+
+        if imin == icut:
+            plt.axvline(period_grid[imin], c='r')
+        else:
+            plt.axvline(period_grid[imin], c='k')
+
+    plt.xlim(period_grid[0], period_grid[-1])
+
+    plt.xlabel('Period [days]')
+    plt.ylabel('Duty Cycle')
 
     plt.tight_layout()
     plt.show()

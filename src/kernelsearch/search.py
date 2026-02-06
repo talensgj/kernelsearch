@@ -34,6 +34,7 @@ LOGEXCEPTION = logger.exception
 # GLOBALS #
 ###########
 
+DEBUG = False
 SECINDAY = 24*3600
 SOLAR_DENSITY = (constants.M_sun/(4/3 * np.pi * constants.R_sun ** 3)).to('g/cm^3').value
 
@@ -223,14 +224,13 @@ def get_duration_idx(duration_grid: np.ndarray,
     return jmin, jmax
 
 
-# TODO This function needs to be reconsidered. The grouping is necessary to
-# TODO speed up computation time, but I'm not sure the current implementation
-# TODO is optimal.
 def make_period_groups(period_grid: np.ndarray,
-                       duration_grid : np.ndarray,
-                       exp_time: float,
+                       duration_grid: np.ndarray,
                        duration_lims: grid.DurationLimits,
+                       exp_time: float,
                        max_duty_cycle: float = 0.20,
+                       frac_duration_step: float = 1.05,
+                       period_group_sampling: int = 3,
                        epoch_sampling: int = 20,
                        min_epoch_step: float = 60 / SECINDAY,
                        max_epoch_step: float = 300 / SECINDAY,
@@ -240,8 +240,13 @@ def make_period_groups(period_grid: np.ndarray,
         where the max duration exceeds the min period.
 
     Parameters
+    ----------
     period_grid: np.ndarray
         The array of period values to be searched in days.
+    duration_grid: np.ndarray
+        The array of duration values to be searched in days.
+    duration_lims: DurationLimits
+        The duration limits as a function of period in days.
     exp_time: float
         The exposure time of the observation in days. It is added to the
         transit durations to account for the smoothing effect of the
@@ -249,6 +254,17 @@ def make_period_groups(period_grid: np.ndarray,
     max_duty_cycle: float
         The maximum ratio of the max duration (+ exp_time) over the min period
         within a period group.
+    frac_duration_step: float
+    period_group_sampling: int
+        The number of duration steps between the longest duration at the start
+        of subsequent period group.
+    epoch_sampling: int
+        The number of epoch steps to take in the shortest duration
+        (default: 20).
+    min_epoch_step: float
+        The smallest acceptable epoch step in days (default: 1 minute).
+    max_epoch_step: float
+        The largest acceptable epoch step in days (default: 5 minutes).
     smooth_window: float, optional
         If given the second groups first period is choses so that it contains no
         cases where the smooth window contain multiple transits.
@@ -260,29 +276,55 @@ def make_period_groups(period_grid: np.ndarray,
 
     """
 
+    excess_duration_ratio = frac_duration_step ** period_group_sampling
+
+    # Check that the duty cycle for all possible periods does not exceed the maximum value.
+    duty_cycle = (excess_duration_ratio * duration_lims.long + exp_time)/period_grid
+    if np.any(duty_cycle > max_duty_cycle):
+        msg = f"Longest possible duty cycle {np.amax(duty_cycle):.2f} exceeds max allowed duty cycle {max_duty_cycle:.2f}."
+        LOGWARNING(msg)
+
+    # Identify the shortest period which is guaranteed to have only 1 transit in the smooth window.
+    icut = -1
+    if smooth_window is not None:
+
+        # Guaranteed baseline if this period is the start of a period group.
+        baseline = period_grid - excess_duration_ratio * duration_lims.long - exp_time
+
+        # Index of shortest period with baseline > smooth_window.
+        icut = np.searchsorted(baseline, smooth_window, side='right')
+
+        if DEBUG:
+            diagnostics.plot_oot_baseline(period_grid, baseline, smooth_window)
+
     imin = 0
     intervals = []
-    if smooth_window is not None:
-        # Guaranteed baseline if this period is the start of a period group.
-        baseline = (1 - max_duty_cycle)*period_grid
+    num_periods = len(period_grid)
+    for imax in range(1, num_periods):
 
-        # Index of shortest period with baseline > smooth_window
-        imin = np.searchsorted(baseline, smooth_window, side='right')
-
-        if imin > 0:
-            intervals = [(0, imin)]
-
-    for i, period in enumerate(period_grid):
-        if i < imin:
+        if imax <= imin:
             continue
 
-        max_duration = duration_lims.long[i]
-        if (max_duration + exp_time)/period_grid[imin] > max_duty_cycle:
-            intervals.append((imin, i))
-            imin = i
+        # Create a period group break where WLS becomes fast.
+        if imax == icut:
+            LOGDEBUG(f"Adding split for smooth window.")
+            intervals.append((imin, imax))
+            imin = imax
+            continue
 
-    if imin != len(period_grid):
-        intervals.append((imin, len(period_grid)))
+        # Create period groups based on the ratio of max durations.
+        if duration_lims.long[imax]/duration_lims.long[imin] > excess_duration_ratio:
+            LOGDEBUG(f"Splitting periods on max duration ratio.")
+            intervals.append((imin, imax))
+            imin = imax
+            continue
+
+    # Add any remaining periods.
+    if imin != num_periods:
+        intervals.append((imin, num_periods))
+
+    if DEBUG:
+        diagnostics.plot_period_groups(period_grid, duration_lims, intervals, icut)
 
     # Now that we know the period intervals, generate the auxillary data.
     ngroups = len(intervals)
@@ -812,6 +854,7 @@ SearchResult = namedtuple('lstsq_result',
                           ['periods',
                            'period_groups',
                            'durations',
+                           'duration_lims',
                            'duration_groups',
                            'power',
                            'chisq0',
@@ -926,6 +969,7 @@ def _1d_periodogram(time,
     search_result = SearchResult(periods=period_grid,
                                  period_groups=[group.period_idx for group in period_groups],
                                  durations=duration_grid,
+                                 duration_lims=duration_lims,
                                  duration_groups=[group.duration_idx for group in period_groups],
                                  power=power,
                                  chisq0=chisq0,
@@ -966,6 +1010,7 @@ def template_lstsq(time: np.ndarray,
                    max_epoch_step: float = 300/SECINDAY,
                    circular_orbits: bool = True,
                    frac_duration_step: float = 1.05,
+                   period_group_sampling: int = 3,
                    normalisation: str = 'normal',
                    ld_type: str = 'linear',
                    ld_pars: tuple = (0.6,),
@@ -975,7 +1020,6 @@ def template_lstsq(time: np.ndarray,
                    smooth_weights: str = 'uniform',
                    max_duty_cycle: float = 0.2,
                    num_processes: Optional[int] = None,
-                   diagnostic_plots: bool = False
                    ) -> tuple[SearchResult, SearchResult]:
     """ Perform a transit search with templates.
     """
@@ -1055,9 +1099,11 @@ def template_lstsq(time: np.ndarray,
     # Compute the period groups.
     period_groups = make_period_groups(period_grid,
                                        duration_grid,
-                                       exp_time,
                                        duration_lims,
+                                       exp_time,
                                        max_duty_cycle=max_duty_cycle,
+                                       frac_duration_step=frac_duration_step,
+                                       period_group_sampling=period_group_sampling,
                                        epoch_sampling=epoch_sampling,
                                        min_epoch_step=min_epoch_step,
                                        max_epoch_step=max_epoch_step,
@@ -1067,7 +1113,7 @@ def template_lstsq(time: np.ndarray,
     nrows = period_grid.size
     ncols = duration_grid.size
 
-    # TODO Making these and collapsing them after is more memory intensive?
+    # Initiate arrays to store the 2D periodogram results.
     power = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_dec = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_inc = np.full((nrows, ncols), fill_value=np.nan)
@@ -1191,7 +1237,7 @@ def template_lstsq(time: np.ndarray,
     dchisq_dec *= weights_sum
     dchisq_inc *= weights_sum
 
-    if diagnostic_plots:
+    if DEBUG:
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
 
     # Generate the final periodogram for circular orbits.
@@ -1209,7 +1255,7 @@ def template_lstsq(time: np.ndarray,
                                          best_vals_circ,
                                          duration_lims=duration_circ)
 
-    if diagnostic_plots:
+    if DEBUG:
         diagnostics.plot_1d_periodogram(search_result_circ, duration_circ, duration_full)
 
     # Generate the final peridogram for the full duration range.
@@ -1230,7 +1276,7 @@ def template_lstsq(time: np.ndarray,
                                              duration_lims=duration_full,
                                              duration_circ=duration_circ)
 
-    if search_result_full is not None and diagnostic_plots:
+    if DEBUG and search_result_full is not None:
         diagnostics.plot_1d_periodogram(search_result_full, duration_circ, duration_full)
 
     return search_result_circ, search_result_full
