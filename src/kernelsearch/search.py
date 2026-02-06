@@ -1236,7 +1236,10 @@ def template_lstsq(time: np.ndarray,
     chisq0 *= weights_sum
     dchisq_dec *= weights_sum
     dchisq_inc *= weights_sum
+
+    # Enforce interval [0, P), then make it the time of first transit in the LC.
     midpoint_vals = np.mod(midpoint_vals, period_grid[:, np.newaxis])
+    midpoint_vals += np.ceil((np.amin(time) - midpoint_vals)/period_grid[:, np.newaxis])*period_grid[:, np.newaxis]
 
     if DEBUG:
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)

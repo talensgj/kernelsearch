@@ -26,7 +26,7 @@ def plot_1d_periodogram(periodogram,
     plt.ylabel(r'$\Delta\chi^2$')
 
     plt.subplot(613, sharex=ax)
-    plt.plot(periodogram.periods, periodogram.midpoint/periodogram.periods)
+    plt.plot(periodogram.periods, np.mod(periodogram.midpoint/periodogram.periods, 1))
 
     plt.ylabel('Phase')
 
@@ -115,7 +115,7 @@ def plot_2d_periodogram(period_grid,
 
     plt.subplot(614, xscale='log', yscale='log')
     plt.title('phase')
-    plt.pcolormesh(period_grid, duration_grid, (midpoint_vals / period_grid[:, np.newaxis]).T)
+    plt.pcolormesh(period_grid, duration_grid, np.mod(midpoint_vals/period_grid[:, np.newaxis], 1).T)
 
     plt.plot(period_grid, duration_full.short, c='k')
     plt.plot(period_grid, duration_full.long, c='k')
