@@ -501,7 +501,6 @@ def get_transit_duration_grid(min_duration: float,
     remainder = steps - num_steps
 
     # Evaluate the log-spaced duration grid.
-    duration_grid = np.logspace(log_min_duration, log_max_duration, num_steps + 1)
     power = np.arange(num_steps + 1) + remainder / 2
     duration_grid = min_duration * frac_duration_step ** power
 
