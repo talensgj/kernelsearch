@@ -74,6 +74,23 @@ class PeriodGroup:
 def get_duration_idx(duration_grid: np.ndarray,
                      duration_lims: tuple[float, float],
                      ) -> tuple[int, int]:
+    """ Get the indices of a minimum an maximum duration into a duration grid.
+
+    Parameters
+    ----------
+    duration_grid: np.ndarray
+        An array of transit duration values.
+    duration_lims: tuple[float, float]
+        The minumum and maximum duration of interest.
+
+    Returns
+    -------
+    jmin: int
+        The index corresponding to the minimum duration.
+    jmax: int
+        The index corresponding to the maximum duration.
+
+    """
 
     min_duration, max_duration = duration_lims
 
