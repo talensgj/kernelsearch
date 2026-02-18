@@ -5,6 +5,57 @@ from . import grid
 import matplotlib.pyplot as plt
 
 
+def plot_duration_example():
+
+    R_star = 1.0  # Solar radii.
+    M_star = 1.0  # Solar masses.
+    rho_sun = 1.41  # g cm^-3
+
+    R_star_min = 0.8 * R_star
+    R_star_max = 1.2 * R_star
+    M_star_min = 0.8 * M_star
+    M_star_max = 1.2 * M_star
+
+    rho_min = rho_sun * M_star_min / R_star_max ** 3
+    rho_max = rho_sun * M_star_max / R_star_min ** 3
+    density_bounds = (rho_min, rho_max)
+    stellar_radius_bounds = (R_star_max, R_star_min)  # R_star_max goes first since it matches rho_min.
+
+    period_grid = grid.get_period_grid(rho_max, 90.)
+
+    duration_ecc, _, _ = grid.get_transit_duration_limits(period_grid, density_bounds, stellar_radius_bounds)
+    duration_circ, _, _ = grid.get_transit_duration_limits(period_grid, density_bounds, stellar_radius_bounds,
+                                                      circular_orbits=True)
+
+    min_duration = np.amin(duration_ecc.short)
+    max_duration = np.amax(duration_ecc.long)
+
+    duration_grid = grid.get_transit_duration_grid(min_duration, max_duration)
+
+    plt.figure(figsize=(8, 5))
+
+    plt.subplot(111, xscale='log', yscale='log')
+
+    plt.fill_between(period_grid, duration_circ.short, duration_circ.long, facecolor='C0', edgecolor='k', alpha=0.5, label='circular')
+    plt.fill_between(period_grid, duration_ecc.short, duration_circ.short, facecolor='C1', edgecolor='k', alpha=0.5)
+    plt.fill_between(period_grid, duration_circ.long, duration_ecc.long, facecolor='C1', edgecolor='k', alpha=0.5, label='eccentric')
+
+    plt.axhline(duration_grid[0], color='k', linestyle='--')
+    plt.axhline(duration_grid[-1], color='k', linestyle='--')
+
+    plt.xlim(0.3, 30.)
+
+    plt.legend(loc='upper left')
+    plt.xlabel('Period [days]')
+    plt.ylabel('Duration [days]')
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    return
+
+
 def plot_power_at_period(phase_grid, duration_grid, power, depth, num_points, min_points):
     """ Make a diagnostic plot of the periodogram at a specific period.
     """
