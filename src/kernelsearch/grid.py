@@ -158,9 +158,11 @@ def get_period_grid(max_stellar_density: float,
     baseline: float
         The time between the start and end of observations in days.
     min_period: float, optional
-        The shortest period to search in days (default: None).
+        The shortest period to search in days, overrides min_separation
+        (default: None).
     max_period: float, optional
-        The longest period to search in days (default: None).
+        The longest period to search in days, overrides min_transits
+        (default: None).
     oversampling: int
         The oversampling factor of the period grid (default: 3).
     min_transits: int

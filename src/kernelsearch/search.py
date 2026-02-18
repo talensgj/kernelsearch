@@ -34,13 +34,13 @@ LOGEXCEPTION = logger.exception
 DEBUG = False
 SECINDAY = 24*3600
 SOLAR_DENSITY = (constants.M_sun/(4/3 * np.pi * constants.R_sun ** 3)).to('g/cm^3').value
-
+MAX_DUTY_CYCLE = 0.30
 
 LDType = Literal["uniform", "linear", "quadratic", "square-root", "logarithmic", "exponential", "power2", "nonlinear"]
 SearchMode = Literal["BLS", "TLS", "WLS"]
 ShortPeriods = Literal["skip", "TLS", "WLS"]
 SmoothWeights = Literal["uniform", "tricube"]
-Normalisation = Literal["normal", "dec_minus_inc"]
+Normalisation = Literal["simple", "umbra"]
 
 
 def evaluate_template(time,
@@ -111,7 +111,6 @@ def make_period_groups(period_grid: np.ndarray,
                        duration_grid: np.ndarray,
                        duration_lims: grid.DurationLimits,
                        exp_time: float,
-                       max_duty_cycle: float = 0.20,
                        frac_duration_step: float = 1.05,
                        period_group_sampling: int = 3,
                        epoch_sampling: int = 20,
@@ -134,13 +133,12 @@ def make_period_groups(period_grid: np.ndarray,
         The exposure time of the observation in days. It is added to the
         transit durations to account for the smoothing effect of the
         integrations.
-    max_duty_cycle: float
-        The maximum ratio of the max duration (+ exp_time) over the min period
-        within a period group.
     frac_duration_step: float
+        The ratio between consecutive durations in the grid. Equivalent to a
+        grid with log-steps of log10(frac_duration_step) (default: 1.05).
     period_group_sampling: int
         The number of duration steps between the longest duration at the start
-        of subsequent period group.
+        of subsequent period groups.
     epoch_sampling: int
         The number of epoch steps to take in the shortest duration
         (default: 20).
@@ -163,8 +161,8 @@ def make_period_groups(period_grid: np.ndarray,
 
     # Check that the duty cycle for all possible periods does not exceed the maximum value.
     duty_cycle = (excess_duration_ratio * duration_lims.long + exp_time)/period_grid
-    if np.any(duty_cycle > max_duty_cycle):
-        msg = f"Longest possible duty cycle {np.amax(duty_cycle):.2f} exceeds max allowed duty cycle {max_duty_cycle:.2f}."
+    if np.any(duty_cycle > MAX_DUTY_CYCLE):
+        msg = f"Longest duty cycle > {MAX_DUTY_CYCLE:.2f}, reducing period_group_sampling is recommended."
         LOGWARNING(msg)
 
     # Identify the shortest period which is guaranteed to have only 1 transit in the smooth window.
@@ -360,7 +358,7 @@ def make_template_grid(periods: np.ndarray,
     baseline = min_period - max_duration - exp_time
     if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
         LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
-        search_mode = 'TLS'
+        search_mode: SearchMode = 'TLS'
 
     if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
@@ -528,7 +526,7 @@ def _search_period(period: np.ndarray,
     dchisq_inc = np.amax(dchisq_inc, axis=1)
 
     # Compute the power spectrum.
-    if normalisation == 'normal':
+    if normalisation == 'simple':
         power = dchisq_dec/chisq0
     else:
         power = (dchisq_dec - dchisq_inc[:, np.newaxis])/(chisq0 - dchisq_inc[:, np.newaxis])
@@ -819,7 +817,7 @@ def _1d_periodogram(time,
     return search_result
 
 
-def template_lstsq(time: np.ndarray,
+def transit_search(time: np.ndarray,
                    flux: np.ndarray,
                    flux_err: np.ndarray,
                    exp_time: float,
@@ -839,17 +837,99 @@ def template_lstsq(time: np.ndarray,
                    circular_orbits: bool = True,
                    frac_duration_step: float = 1.05,
                    period_group_sampling: int = 3,
-                   normalisation: Normalisation = 'normal',
+                   normalisation: Normalisation = 'umbra',
                    ld_type: LDType = 'linear',
                    ld_pars: tuple = (0.6,),
                    search_mode: SearchMode = 'TLS',
                    short_periods: ShortPeriods = 'skip',
                    smooth_window: Optional[float] = None,
                    smooth_weights: SmoothWeights = 'uniform',
-                   max_duty_cycle: float = 0.2,
                    num_processes: Optional[int] = None,
                    ) -> tuple[SearchResult, SearchResult]:
-    """ Perform a transit search with templates.
+    """ Perform a transit search on the provided data.
+
+    Parameters
+    ----------
+    time: np.ndarray
+        The times of the observations in days.
+    flux: np.ndarray
+        The flux values of the observations.
+    flux_err: np.ndarray
+        The flux uncertainties of the observations.
+    exp_time:
+        The exposure time of the observations in days.
+    exp_cadence:
+        The exposure cadence of the observations in days.
+    min_stellar_radius: float
+        The lower bound on the stellar radius in solar units.
+    max_stellar_radius: float
+        The upper bound on the stellar radius in solar units.
+    min_stellar_mass: float
+        The lower bound on the stellar mass in solar units.
+    max_stellar_mass: float
+        The upper bound on the stellar mass in solar units.
+    min_transits: int
+        The minimum number of transits observed between the start and end of
+        observations (default: 3).
+    min_separation: float
+        The minimum orbital separation between the host star and the planet in
+        stellar radii (default: 3).
+    period_sampling: int
+        The oversampling factor of the period grid (default: 3).
+    min_period: float
+        The shortest period to search in days, overrides min_separation
+        (default: None).
+    max_period: float, optional
+        The longest period to search in days, overrides min_transits
+        (default: None).
+    epoch_sampling: int
+        The number of epoch steps to take in the shortest duration
+        (default: 20).
+    min_epoch_step: float
+        The smallest acceptable epoch step in days (default: 1 minute).
+    max_epoch_step: float
+        The largest acceptable epoch step in days (default: 5 minutes).
+    circular_orbits: bool
+        If True, search transit durations appropriate for circular orbits,
+        otherwise search a wider range for eccentric orbits (default: True).
+    frac_duration_step: float
+        The ratio between consecutive durations in the grid. Equivalent to a
+        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+    period_group_sampling: int
+        The number of duration steps between the longest duration at the start
+        of subsequent period groups.
+    normalisation: str
+        The way to convert the delta chi-square to periodogram power. Can be
+        'normal' or 'umbra' (default: 'umbra').
+    ld_type: str
+        The limb-darkening law to use for the TLS or WLS templates. Can be any
+        law valid in the batman package (default: 'linear').
+    ld_pars: str
+        The limb-darkening parameters to use (default: (0.6,)).
+    search_mode: str
+        The type of transit templates to use, can be 'BLS', 'TLS' or 'WLS'
+        (default: 'TLS').
+    short_periods: str
+        How to treat short periods when search_mode = 'WLS', can be 'skip',
+        'TLS' or 'WLS' (default: 'skip').
+    smooth_window: float or None
+        The smoothing window to use when search_mode = 'WLS', should match any
+        whatever filter was applied to the data (default: None).
+    smooth_weights: str
+        The weights to apply across the smoothing window when search_mode = 'WLS',
+        should match whatever filter was applied to the data and can be 'uniform'
+        or 'tricube' (default: 'uniform').
+    num_processes: int or None
+        The number of CPUs to use when multi-processing (default: None).
+
+    Returns
+    -------
+    search_result_circ: SearchResult
+        The periodogram for a search of the circular durations only.
+    search_result_full: SearchResult or None
+        The periodogram for a search of the full (eccentric) duration range,
+        provided only if circular_orbits = False.
+
     """
 
     if search_mode not in ['BLS', 'TLS', 'WLS']:
@@ -868,7 +948,7 @@ def template_lstsq(time: np.ndarray,
         LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
         smooth_window = None
 
-    if normalisation not in ['normal', 'dec_minus_inc']:
+    if normalisation not in ['simple', 'umbra']:
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
         raise ValueError(errmsg)
 
@@ -929,7 +1009,6 @@ def template_lstsq(time: np.ndarray,
                                        duration_grid,
                                        duration_lims,
                                        exp_time,
-                                       max_duty_cycle=max_duty_cycle,
                                        frac_duration_step=frac_duration_step,
                                        period_group_sampling=period_group_sampling,
                                        epoch_sampling=epoch_sampling,
@@ -982,10 +1061,10 @@ def template_lstsq(time: np.ndarray,
                 LOGINFO("  Skipping short periods in WLS search.")
                 continue
             if short_periods == 'TLS':
-                search_mode_ = 'TLS'
+                search_mode_: SearchMode = 'TLS'
                 LOGINFO("  Using TLS templates for short periods in WLS search.")
             if short_periods == 'WLS':
-                search_mode_ = 'TLS'
+                search_mode_: SearchMode = 'TLS'
                 is_short_period = True
                 LOGINFO("  Using WLS templates for short periods in WLS search.")
 
