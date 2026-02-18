@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Literal
 from functools import partial
 from dataclasses import dataclass
 from collections import namedtuple
@@ -12,8 +12,6 @@ import multiprocessing as mp
 from astropy import constants
 
 from . import grid, models, diagnostics
-
-import matplotlib.pyplot as plt
 
 
 #############
@@ -394,41 +392,30 @@ def make_template_grid(periods: np.ndarray,
     return template_edges, template_models, template_square, template_count
 
 
-def _search_period(period,
-                   duration_lims_circ,
-                   duration_lims_full,
-                   time,
-                   weights_norm,
-                   delta_flux_weighted,
-                   flux_mean,
-                   chisq0,
-                   epoch_step,
-                   duration_grid,
-                   templates,
-                   min_points,
-                   is_short_period,
-                   normalisation,
-                   smooth_window,
-                   smooth_weights,
-                   exp_time,
-                   exp_cadence,
-                   ld_type,
-                   ld_pars,
-                   debug=False
-                   ):
-
-    # nvals = duration_grid.size
-
-    # Select the durations that encompass the required range at this period.
-    # jmin, jmax = get_duration_idx(duration_grid, duration_lims_full)
-
-    # min_points = min_points[jmin:jmax]
-    # duration_grid = duration_grid[jmin:jmax]
-
-    template_edges = templates[0]
-    template_models = templates[1]#[jmin:jmax]
-    template_square = templates[2]#[jmin:jmax]
-    template_count = templates[3]#[jmin:jmax]
+def _search_period(period: np.ndarray,
+                   duration_lims_circ: np.ndarray,
+                   duration_lims_full: np.ndarray,
+                   time: np.ndarray,
+                   weights_norm: np.ndarray,
+                   delta_flux_weighted: np.ndarray,
+                   flux_mean: float,
+                   chisq0: float,
+                   epoch_step: float,
+                   duration_grid: np.ndarray,
+                   templates: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                   min_points: np.ndarray,
+                   is_short_period: bool,
+                   normalisation: Literal["normal", "dec_minus_inc"],
+                   smooth_window: float,
+                   smooth_weights: Literal["uniform", "tricube"],
+                   exp_time: float,
+                   exp_cadence: float,
+                   ld_type: Literal["uniform", "linear", "quadratic", "square-root", "logarithmic", "exponential", "power2", "nonlinear"],
+                   ld_pars: tuple,
+                   debug: bool = False
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """ Perform the transit search for a single period value.
+    """
 
     # At short periods WLS requires special treatment.
     if is_short_period:
@@ -442,10 +429,12 @@ def _search_period(period,
                                        search_mode='WLS',
                                        smooth_window=smooth_window,
                                        smooth_weights=smooth_weights)
-        template_edges = templates[0]
-        template_models = templates[1]
-        template_square = templates[2]
-        template_count = templates[3]
+
+    # Unpack the transit templates.
+    template_edges = templates[0]
+    template_models = templates[1]
+    template_square = templates[2]
+    template_count = templates[3]
 
     # nrows: number of kernels (i.e. durations), ncols: length of transit kernels.
     nrows, ncols = template_models.shape
@@ -482,10 +471,10 @@ def _search_period(period,
     b_bin = b_bin.reshape((1, -1))
 
     # Perform convolutions.
-    npoints = signal.oaconvolve(count, template_count, mode='valid')
     alpha = signal.oaconvolve(b_bin, template_models, mode='valid')
     beta = signal.oaconvolve(a_bin, template_square, mode='valid')
     gamma = signal.oaconvolve(a_bin, template_models, mode='valid')
+    num_points = signal.oaconvolve(count, template_count, mode='valid')
 
     # Ignore division errors caused by an absence of in-transit data.
     # The invalid values are handled below.
@@ -498,9 +487,9 @@ def _search_period(period,
     min_points = np.maximum(min_points, 1)
 
     if np.isscalar(min_points):
-        mask = npoints < min_points
+        mask = num_points < min_points
     else:
-        mask = npoints < min_points[:, np.newaxis]
+        mask = num_points < min_points[:, np.newaxis]
 
     depth[mask] = 0
 
@@ -512,88 +501,42 @@ def _search_period(period,
     select_inc = depth < 0
     dchisq_inc = np.where(select_inc, dchisq, 0)
     dchisq_dec = np.where(select_inc, 0, dchisq)
-    dchisq_inc_ = np.amax(dchisq_inc, axis=1)
+    dchisq_inc = np.amax(dchisq_inc, axis=1)
 
     # Compute the power spectrum.
     if normalisation == 'normal':
         power = dchisq_dec/chisq0
     else:
-        power = (dchisq_dec - dchisq_inc_[:, np.newaxis])/(chisq0 - dchisq_inc_[:, np.newaxis])
+        power = (dchisq_dec - dchisq_inc[:, np.newaxis])/(chisq0 - dchisq_inc[:, np.newaxis])
 
     if debug:
-        plt.figure(figsize=(8, 8))
+        phase_grid = (bin_edges[:-ncols] + bin_edges[ncols:]) / 2
+        diagnostics.plot_power_at_period(phase_grid, duration_grid, power, depth, num_points, min_points)
 
-        ax = plt.subplot(311)
-        vlim = np.amax(np.abs(power))
-        plt.pcolormesh(power, vmin=-vlim, vmax=vlim, cmap='coolwarm')
-        plt.colorbar(label='power')
-        plt.xlabel('Midpoint')
-        plt.ylabel('Duration')
-
-        plt.subplot(312, sharex=ax, sharey=ax)
-        vlim = np.amax(np.abs(depth))
-        plt.pcolormesh(depth, vmin=-vlim, vmax=vlim, cmap='coolwarm')
-        plt.colorbar(label='depth scale')
-        plt.xlabel('Midpoint')
-        plt.ylabel('Duration')
-
-        plt.subplot(313, sharex=ax, sharey=ax)
-        plt.pcolormesh(npoints/min_points[:, np.newaxis], vmin=0, cmap='viridis')
-        plt.colorbar(label='npoints/min_points')
-        plt.xlabel('Midpoint')
-        plt.ylabel('Duration')
-
-        plt.tight_layout()
-        plt.show()
-
-    # Find the peak in the power, and associated dchisq values.
+    # For every duration find the peaks in the power, and associated dchisq values.
     irow = np.arange(power.shape[0])
     icol = np.argmax(power, axis=1)
-    power_ = power[irow, icol]
-    dchisq_dec_ = dchisq_dec[irow, icol]
+    power = power[irow, icol]
+    dchisq_dec = dchisq_dec[irow, icol]
 
-    # Store the parameters corresponding to peak power.
+    # Store the parameters corresponding to peak power values.
     midpoints = period*(bin_edges[:-ncols] + bin_edges[ncols:])/2
-    midpoint_vals_ = midpoints[icol]
-    depth_vals_ = depth[irow, icol]
-    flux_level_vals_ = flux_mean - depth_vals_ * gamma[irow, icol]
+    midpoint_vals = midpoints[icol]
+    depth_vals = depth[irow, icol]
+    flux_level_vals = flux_mean - depth_vals * gamma[irow, icol]
 
-    # power = np.full(nvals, np.nan)
-    # power[jmin:jmax] = power_
-    #
-    # dchisq_dec = np.full(nvals, np.nan)
-    # dchisq_dec[jmin:jmax] = dchisq_dec_
-    #
-    # dchisq_inc = np.full(nvals, np.nan)
-    # dchisq_inc[jmin:jmax] = dchisq_inc_
-    #
-    # midpoint_vals = np.full(nvals, np.nan)
-    # midpoint_vals[jmin:jmax] = midpoint_vals_
-    #
-    # depth_vals = np.full(nvals, np.nan)
-    # depth_vals[jmin:jmax] = depth_vals_
-    #
-    # flux_level_vals = np.full(nvals, np.nan)
-    # flux_level_vals[jmin:jmax] = flux_level_vals_
-
-    power = power_
-    dchisq_dec = dchisq_dec_
-    dchisq_inc = dchisq_inc_
-    midpoint_vals = midpoint_vals_
-    depth_vals = depth_vals_
-    flux_level_vals = flux_level_vals_
-
+    # Store the best model for the circular duration limits.
     jmin, jmax = get_duration_idx(duration_grid, duration_lims_circ)
     arg = np.argmax(power[jmin:jmax])
     best_power_circ = power[jmin + arg]
     best_model_circ = template_models[jmin + arg]
+    best_vals_circ = (best_power_circ, template_edges, best_model_circ)
 
+    # Store the best model for the full duration limits.
     jmin, jmax = get_duration_idx(duration_grid, duration_lims_full)
     arg = np.argmax(power[jmin:jmax])
     best_power_full = power[jmin + arg]
     best_model_full = template_models[jmin + arg]
-
-    best_vals_circ = (best_power_circ, template_edges, best_model_circ)
     best_vals_full = (best_power_full, template_edges, best_model_full)
 
     return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full

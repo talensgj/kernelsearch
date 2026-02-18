@@ -5,6 +5,48 @@ from . import grid
 import matplotlib.pyplot as plt
 
 
+def plot_power_at_period(phase_grid, duration_grid, power, depth, num_points, min_points):
+    """ Make a diagnostic plot of the periodogram at a specific period.
+    """
+
+    # Depths in [ppm].
+    depth = 1e6*depth
+
+    plt.figure(figsize=(16, 8))
+
+    ax = plt.subplot(311, yscale='log')
+
+    vlim = np.amax(np.abs(power))
+    plt.pcolormesh(phase_grid, duration_grid, power, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+    plt.colorbar(label='Power')
+
+    plt.xlabel('Phase')
+    plt.ylabel('Duration [days]')
+
+    plt.subplot(312, sharex=ax, sharey=ax)
+
+    vlim = np.amax(np.abs(depth))
+    plt.pcolormesh(phase_grid, duration_grid, depth, vmin=-vlim, vmax=vlim, cmap='coolwarm')
+    plt.colorbar(label='Depth [ppm]')
+
+    plt.xlabel('Phase')
+    plt.ylabel('Duration [days]')
+
+    plt.subplot(313, sharex=ax, sharey=ax)
+
+    plt.pcolormesh(phase_grid, duration_grid, num_points/min_points[:, np.newaxis], cmap='viridis')
+    plt.colorbar(label='num_points/min_points')
+
+    plt.xlabel('Phase')
+    plt.ylabel('Duration [days]')
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    return
+
+
 def plot_1d_periodogram(periodogram,
                         duration_circ,
                         duration_full):
