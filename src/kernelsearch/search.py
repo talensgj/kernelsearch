@@ -36,6 +36,13 @@ SECINDAY = 24*3600
 SOLAR_DENSITY = (constants.M_sun/(4/3 * np.pi * constants.R_sun ** 3)).to('g/cm^3').value
 
 
+LDType = Literal["uniform", "linear", "quadratic", "square-root", "logarithmic", "exponential", "power2", "nonlinear"]
+SearchMode = Literal["BLS", "TLS", "WLS"]
+ShortPeriods = Literal["skip", "TLS", "WLS"]
+SmoothWeights = Literal["uniform", "tricube"]
+Normalisation = Literal["normal", "dec_minus_inc"]
+
+
 def evaluate_template(time,
                       period,
                       midpoint,
@@ -60,7 +67,7 @@ class PeriodGroup:
     period_idx: tuple[int, int]
     duration_idx: tuple[int, int]
     epoch_step: float
-    search_mode: str = None
+    search_mode: SearchMode = None
 
     def get_period_group(self, period_grid):
         imin, imax = self.period_idx
@@ -228,13 +235,13 @@ def _make_transit_templates(mid_times: np.ndarray,
                             duration_grid: np.ndarray,
                             transit_params: dict,
                             supersample_factor: int,
-                            ld_type: str,
+                            ld_type: LDType,
                             ld_pars: tuple,
                             exp_time: float,
                             exp_cadence: float,
-                            search_mode: str = 'TLS',
+                            search_mode: SearchMode = 'TLS',
                             smooth_window: Optional[float] = None,
-                            smooth_weights: str = 'uniform'):
+                            smooth_weights: SmoothWeights = 'uniform'):
 
     if search_mode == 'WLS':
 
@@ -326,12 +333,12 @@ def make_template_grid(periods: np.ndarray,
                        epoch_step: float,
                        exp_time: float,
                        exp_cadence: float,
-                       ld_type: str = 'linear',
+                       ld_type: LDType = 'linear',
                        ld_pars: tuple = (0.6,),
                        ref_depth: float = 0.005,
-                       search_mode: str = 'TLS',
+                       search_mode: SearchMode = 'TLS',
                        smooth_window: Optional[float] = None,
-                       smooth_weights: str = 'uniform'
+                       smooth_weights: SmoothWeights = 'uniform'
                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
     if search_mode not in ['BLS', 'TLS', 'WLS']:
@@ -422,12 +429,12 @@ def _search_period(period: np.ndarray,
                    templates: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
                    min_points: np.ndarray,
                    is_short_period: bool,
-                   normalisation: Literal["normal", "dec_minus_inc"],
+                   normalisation: Normalisation,
                    smooth_window: float,
-                   smooth_weights: Literal["uniform", "tricube"],
+                   smooth_weights: SmoothWeights,
                    exp_time: float,
                    exp_cadence: float,
-                   ld_type: Literal["uniform", "linear", "quadratic", "square-root", "logarithmic", "exponential", "power2", "nonlinear"],
+                   ld_type: LDType,
                    ld_pars: tuple,
                    debug: bool = False
                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -832,13 +839,13 @@ def template_lstsq(time: np.ndarray,
                    circular_orbits: bool = True,
                    frac_duration_step: float = 1.05,
                    period_group_sampling: int = 3,
-                   normalisation: str = 'normal',
-                   ld_type: str = 'linear',
+                   normalisation: Normalisation = 'normal',
+                   ld_type: LDType = 'linear',
                    ld_pars: tuple = (0.6,),
-                   search_mode: str = 'TLS',
-                   short_periods: str = 'skip',
+                   search_mode: SearchMode = 'TLS',
+                   short_periods: ShortPeriods = 'skip',
                    smooth_window: Optional[float] = None,
-                   smooth_weights: str = 'uniform',
+                   smooth_weights: SmoothWeights = 'uniform',
                    max_duty_cycle: float = 0.2,
                    num_processes: Optional[int] = None,
                    ) -> tuple[SearchResult, SearchResult]:
