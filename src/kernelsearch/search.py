@@ -417,7 +417,7 @@ def make_template_grid(periods: np.ndarray,
 def _search_period(period: np.ndarray,
                    duration_lims_circ: np.ndarray,
                    duration_lims_full: np.ndarray,
-                   time: np.ndarray,
+                   delta_time: np.ndarray,
                    weights_norm: np.ndarray,
                    delta_flux_weighted: np.ndarray,
                    flux_mean: float,
@@ -462,7 +462,7 @@ def _search_period(period: np.ndarray,
     nrows, ncols = template_models.shape
 
     # Phase fold the data.
-    phase = np.mod(time/period, 1)
+    phase = np.mod(delta_time/period, 1)
 
     # Create the phase bins.
     num_bins = np.ceil(period/epoch_step).astype('int')
@@ -542,8 +542,8 @@ def _search_period(period: np.ndarray,
     dchisq_dec = dchisq_dec[irow, icol]
 
     # Store the parameters corresponding to peak power values.
-    midpoints = period*(bin_edges[:-ncols] + bin_edges[ncols:])/2
-    midpoint_vals = midpoints[icol]
+    phase_grid = (bin_edges[:-ncols] + bin_edges[ncols:])/2
+    phase_vals = phase_grid[icol]
     depth_vals = depth[irow, icol]
     flux_level_vals = flux_mean - depth_vals * gamma[irow, icol]
 
@@ -561,7 +561,7 @@ def _search_period(period: np.ndarray,
     best_model_full = template_models[jmin + arg]
     best_vals_full = (best_power_full, template_edges, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
@@ -571,7 +571,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     power = np.full((nrows, ncols), np.nan)
     dchisq_dec = np.full((nrows, ncols), np.nan)
     dchisq_inc = np.full((nrows, ncols), np.nan)
-    midpoint_vals = np.full((nrows, ncols), np.nan)
+    phase_vals = np.full((nrows, ncols), np.nan)
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
 
@@ -591,7 +591,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
         power[i] = result[0]
         dchisq_dec[i] = result[1]
         dchisq_inc[i] = result[2]
-        midpoint_vals[i] = result[3]
+        phase_vals[i] = result[3]
         depth_vals[i] = result[4]
         flux_level_vals[i] = result[5]
 
@@ -611,7 +611,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _search_periods_with_pool(num_processes, periods, duration_lims_circ, duration_lims_full, **kwargs):
@@ -621,7 +621,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     power = np.full((nrows, ncols), np.nan)
     dchisq_dec = np.full((nrows, ncols), np.nan)
     dchisq_inc = np.full((nrows, ncols), np.nan)
-    midpoint_vals = np.full((nrows, ncols), np.nan)
+    phase_vals = np.full((nrows, ncols), np.nan)
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
 
@@ -651,7 +651,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
             power[i::num_processes, :] = result[0]
             dchisq_dec[i::num_processes, :] = result[1]
             dchisq_inc[i::num_processes, :] = result[2]
-            midpoint_vals[i::num_processes, :] = result[3]
+            phase_vals[i::num_processes, :] = result[3]
             depth_vals[i::num_processes, :] = result[4]
             flux_level_vals[i::num_processes, :] = result[5]
 
@@ -673,7 +673,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 SearchResult = namedtuple('lstsq_result',
@@ -700,9 +700,22 @@ SearchResult = namedtuple('lstsq_result',
                            'model_flux'])
 
 
-def _prepare_lightcurve(flux: np.ndarray,
+def _prepare_lightcurve(time: np.ndarray,
+                        flux: np.ndarray,
                         flux_err: np.ndarray
-                        ) -> tuple[np.ndarray, np.ndarray, float, float, float]:
+                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float]:
+    """ Perform sanity checks and manipulate the input lightcurve.
+    """
+
+    # Make sure the input is sorted.
+    sort = np.argsort(time)
+    time = time[sort]
+    flux = flux[sort]
+    flux_err = flux_err[sort]
+
+    # Compute time relative to the start of observations.
+    tstart = time[0]
+    delta_time = time - tstart
 
     # Compute normalized weights.
     weights = 1 / flux_err ** 2
@@ -714,10 +727,10 @@ def _prepare_lightcurve(flux: np.ndarray,
     delta_flux_weighted = weights_norm * (flux - flux_mean)
     chisq0 = np.sum(weights_norm * (flux - flux_mean) ** 2)
 
-    return weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0
+    return delta_time, delta_flux_weighted, weights_norm, tstart, flux_mean, weights_sum, chisq0
 
 
-def _1d_periodogram(time,
+def _1d_periodogram(time: np.ndarray,
                     period_grid: np.ndarray,
                     duration_grid: np.ndarray,
                     period_groups: list[PeriodGroup],
@@ -957,8 +970,8 @@ def transit_search(time: np.ndarray,
         raise ValueError(errmsg)
 
     # Pre-compute some arrays from the lightcurves.
-    result = _prepare_lightcurve(flux, flux_err)
-    weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0 = result
+    result = _prepare_lightcurve(time, flux, flux_err)
+    delta_time, delta_flux_weighted, weights_norm, tstart, flux_mean, weights_sum, chisq0 = result
 
     # Compute stellar densities from the stellar mass and radii ranges.
     min_stellar_density = SOLAR_DENSITY * min_stellar_mass / max_stellar_radius ** 3
@@ -968,7 +981,7 @@ def transit_search(time: np.ndarray,
 
     # Compute the period grid to search.
     period_grid = grid.get_period_grid(max_stellar_density,
-                                       np.ptp(time),
+                                       delta_time[-1],
                                        min_period=min_period,
                                        max_period=max_period,
                                        oversampling=period_sampling,
@@ -1024,7 +1037,7 @@ def transit_search(time: np.ndarray,
     power = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_dec = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_inc = np.full((nrows, ncols), fill_value=np.nan)
-    midpoint_vals = np.full((nrows, ncols), fill_value=np.nan)
+    phase_vals = np.full((nrows, ncols), fill_value=np.nan)
     depth_vals = np.full((nrows, ncols), fill_value=np.nan)
     flux_level_vals = np.full((nrows, ncols), fill_value=np.nan)
 
@@ -1087,7 +1100,7 @@ def transit_search(time: np.ndarray,
                                        smooth_weights=smooth_weights)
 
         kwargs = dict()
-        kwargs['time'] = time
+        kwargs['delta_time'] = delta_time
         kwargs['weights_norm'] = weights_norm
         kwargs['delta_flux_weighted'] = delta_flux_weighted
         kwargs['flux_mean'] = flux_mean
@@ -1113,7 +1126,7 @@ def transit_search(time: np.ndarray,
         power[imin:imax, jmin:jmax] = result[0]
         dchisq_dec[imin:imax, jmin:jmax] = result[1]
         dchisq_inc[imin:imax, jmin:jmax] = result[2]
-        midpoint_vals[imin:imax, jmin:jmax] = result[3]
+        phase_vals[imin:imax, jmin:jmax] = result[3]
         depth_vals[imin:imax, jmin:jmax] = result[4]
         flux_level_vals[imin:imax, jmin:jmax] = result[5]
 
@@ -1144,9 +1157,8 @@ def transit_search(time: np.ndarray,
     dchisq_dec *= weights_sum
     dchisq_inc *= weights_sum
 
-    # Enforce interval [0, P), then make it the time of first transit in the LC.
-    midpoint_vals = np.mod(midpoint_vals, period_grid[:, np.newaxis])
-    midpoint_vals += np.ceil((np.amin(time) - midpoint_vals)/period_grid[:, np.newaxis])*period_grid[:, np.newaxis]
+    # Convert phase relative to start of observation to midpoint of first transit.
+    midpoint_vals = tstart + period_grid[:, np.newaxis]*np.mod(phase_vals, 1)
 
     if DEBUG:
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
