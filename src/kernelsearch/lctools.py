@@ -6,7 +6,77 @@ from scipy import signal, interpolate
 import wotan
 import wotan.gaps
 
+from . import utils
+
 import matplotlib.pyplot as plt
+
+
+def bin_lightcurve(time: np.ndarray,
+                   flux: np.ndarray,
+                   flux_err: np.ndarray,
+                   bin_size: float = 12,
+                   bin_method: utils.BinMethod = "points",
+                   min_points: int = 1
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """ Re-bin lightcurve.
+
+    Parameters
+    ----------
+    time: np.ndarray
+        The times of the observations.
+    flux: np.ndarray
+        The flux values of the observations.
+    flux_err: np.ndarray
+        The flux uncertainties of the observations.
+    bin_size: float or int
+        Either the number of points ber bin or the width of the bins in the
+        same units as time (deafult: 12).
+    bin_method: str
+        Either "points" to place a fixed number of points in a bin, or "window"
+        to use bins with a fixed width (default: 'points').
+    min_points: int
+        The minimum number of points per bin, bins with fewer points are removed
+        from the output (default: 1).
+
+    """
+
+    # Check the bin_method is valid.
+    if bin_method not in utils.BinMethod.get_args():
+        raise ValueError(f"Unknown binning method: {bin_method}.")
+
+    # Check min_points is valid.
+    if min_points < 1:
+        raise ValueError(f"Parameter min_points must be >= 1.")
+
+    # Assign observations to the right bins.
+    bin_idx = None
+    if bin_method == "points":
+        bin_idx = np.arange(len(time)) // bin_size
+    if bin_method == "window":
+        nbins = np.ceil(np.ptp(time)/bin_size).astype('int')
+        bin_edges = np.amin(time) + bin_size*np.arange(nbins + 1)
+        bin_idx = np.searchsorted(bin_edges, time, side="right")
+
+    # Compute intermediate arrays.
+    weights = 1/flux_err**2
+    num_points = np.bincount(bin_idx)
+    time_sum = np.bincount(bin_idx, weights=time)
+    weights_sum = np.bincount(bin_idx, weights=weights)
+    weights_flux_sum = np.bincount(bin_idx, weights=weights*flux)
+
+    # Remove bins containing too few points.
+    mask = num_points >= min_points
+    num_points = num_points[mask]
+    time_sum = time_sum[mask]
+    weights_sum = weights_sum[mask]
+    weights_flux_sum = weights_flux_sum[mask]
+
+    # Compute the binned lightcurve.
+    bin_time = time_sum/min_points
+    bin_flux = weights_flux_sum/weights_sum
+    bin_flux_err = np.sqrt(1/weights_sum)
+
+    return bin_time, bin_flux, bin_flux_err, num_points
 
 
 def get_wotan_kwargs(method: str) -> dict:
