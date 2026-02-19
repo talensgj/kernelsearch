@@ -1,10 +1,12 @@
-from typing import Optional
+from typing import Optional, get_args
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 import batman
 from astropy import constants, units
+
+from . import utils
 
 RNG = np.random.default_rng(5627323756)
 DEG2RAD = np.pi / 180
@@ -173,7 +175,7 @@ def xy2latlon(x, y, lat0, lon0):
 
 def analytic_transit_model(time: np.ndarray,
                            transit_params: dict,
-                           ld_type: str,
+                           ld_type: utils.LDType,
                            ld_pars: ArrayLike,
                            exp_time: Optional[float] = None,
                            supersample_factor: Optional[int] = None,
@@ -221,6 +223,10 @@ def analytic_transit_model(time: np.ndarray,
         The batman.TransitModel fac parameter used.
 
     """
+
+    if ld_type not in get_args(utils.LDType):
+        msg = f"Invalid value '{ld_type}' for parameter ld_type."
+        raise ValueError(msg)
 
     if exp_time is None:
         exp_time = 0.
