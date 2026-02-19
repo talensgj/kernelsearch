@@ -1,92 +1,211 @@
-from typing import Optional, get_args
+from typing import Union, Optional, get_args
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 import batman
-from astropy import constants, units
 
 from . import utils
 
 RNG = np.random.default_rng(5627323756)
-DEG2RAD = np.pi / 180
-RAD2DEG = 180 / np.pi
 
 
-def impact2inc(b, a, ecc, w):
-    """ Convert the impact parameter to orbital inclination.
+def _ecc_factors(eccentricity: Union[float, np.ndarray],
+                 arg_periastron: Union[float, np.ndarray]
+                 ) -> tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
+    """ Compute 2 eccentricity terms that appear in other equations.
     """
 
-    factor = a * (1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
-    inc = np.arccos(b / factor) * RAD2DEG
+    arg_periastron = np.deg2rad(arg_periastron)
 
-    return inc
+    x = 1 - eccentricity ** 2
+    y = 1 + eccentricity * np.sin(arg_periastron)
+
+    alpha = np.sqrt(x) / y
+    beta = x / y
+
+    return alpha, beta
 
 
-def inc2impact(inc, a, ecc, w):
-    """ Convert orbital inclination to the impact parameter.
+def get_orbital_inclination(impact_param: Union[float, np.ndarray],
+                            sm_axis: Union[float, np.ndarray],
+                            eccentricity: Union[float, np.ndarray],
+                            arg_periastron: Union[float, np.ndarray]
+                            ) -> Union[float, np.ndarray]:
+    """ Compute the orbital inclination (i) for an eccentric orbit, using
+        Equation 7 from Winn (2010).
+
+    Parameters
+    ----------
+    impact_param: float or np.ndarray
+        The impact parameter value(s).
+    sm_axis: float or np.ndarray
+        The semi-major axis value(s) in stellar radii.
+    eccentricity: float or np.ndarray
+        The orbital eccentricty value(s).
+    arg_periastron: float or np.ndarray
+        The argument of periastron in degrees.
+
+    Returns
+    -------
+    inclination: float or np.ndarray
+        The orbital inclination in degrees.
+
     """
 
-    factor = a * (1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
-    impact = factor * np.cos(inc * DEG2RAD)
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    inclination = np.arccos(impact_param / (sm_axis * beta))
+    inclination = np.rad2deg(inclination)
 
-    return impact
+    return inclination
 
 
-def axis2duration(a, per, p, b, ecc, w):
-    """ Convert the scaled semi-major axis to transit duration.
+def get_impact_parameter(inclination: Union[float, np.ndarray],
+                         sm_axis: Union[float, np.ndarray],
+                         eccentricity: Union[float, np.ndarray],
+                         arg_periastron: Union[float, np.ndarray]
+                         ) -> Union[float, np.ndarray]:
+    """ Compute the impact parameter (b) for an eccentric orbit, using
+        Equation 7 from Winn (2010).
+
+    Parameters
+    ----------
+    inclination: float or np.ndarray
+        The orbital inclination values(s) in degrees.
+    sm_axis: float or np.ndarray
+        The semi-major axis value(s) in stellar radii.
+    eccentricity: float or np.ndarray
+        The orbital eccentricty value(s).
+    arg_periastron: float or np.ndarray
+        The argument of periastron values(s) in degrees.
+
+    Returns
+    -------
+    impact_param: float or np.ndarray
+        The impact parameter value(s).
+
     """
 
-    # Duration in the case of a circular orbit.
-    sin_sq = ((1 + p) ** 2 - b ** 2) / (a ** 2 - b ** 2)
-    transit_duration = per / np.pi * np.arcsin(np.sqrt(sin_sq))
+    inclination = np.deg2rad(inclination)
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    impact_param = sm_axis * beta * np.cos(inclination)
 
-    # Eccentricity correction (for transits).
-    transit_duration = transit_duration * np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+    return impact_param
+
+
+def get_transit_duration(period: Union[float, np.ndarray],
+                         sm_axis: Union[float, np.ndarray],
+                         planet_radius: Union[float, np.ndarray],
+                         impact_param: Union[float, np.ndarray],
+                         eccentricity: Union[float, np.ndarray],
+                         arg_periastron: Union[float, np.ndarray]
+                         ) -> Union[float, np.ndarray]:
+    """ Compute the full transit duration (T14) for an eccentric orbit, using
+        Equations 7, 14 and 16 from Winn (2010).
+
+    Parameters
+    ----------
+    period: float or np.ndarray
+        The orbital period value(s) in days.
+    sm_axis: float or np.ndarray
+        The semi-major axis value(s) in stellar radii.
+    planet_radius: float or np.ndarray
+        The planet radius value(s) in stellar radii.
+    impact_param: float or np.ndarray
+        The impact parameter value(s).
+    eccentricity: float or np.ndarray
+        The orbital eccentricty value(s).
+    arg_periastron: float or np.ndarray
+        The argument of periastron value(s) in degrees.
+
+    Returns
+    -------
+    transit_duration: float or np.ndarray
+        The transit duration value(s) in days.
+
+    """
+
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    sin_sq = beta ** 2 * ((1 + planet_radius) ** 2 - impact_param ** 2) / (beta ** 2 * sm_axis ** 2 - impact_param ** 2)
+    transit_duration = alpha * period / np.pi * np.arcsin(np.sqrt(sin_sq))
 
     return transit_duration
 
 
-def duration2axis(transit_duration, per, p, b, ecc, w):
-    """ Convert the scaled semi-major axis to transit duration.
+def get_sm_axis(period: Union[float, np.ndarray],
+                transit_duration: Union[float, np.ndarray],
+                planet_radius: Union[float, np.ndarray],
+                impact_param: Union[float, np.ndarray],
+                eccentricity: Union[float, np.ndarray],
+                arg_periastron: Union[float, np.ndarray]
+                ) -> Union[float, np.ndarray]:
+    """ Compute the semi-major axis that produces a sppecific duration for an
+        eccentric orbit, using Equations 7, 14 and 16 from Winn (2010).
     """
 
-    # Eccentricity correction (for transits).
-    transit_duration = transit_duration / (np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD)))
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    sin_sq = np.sin(transit_duration / alpha * np.pi / period) ** 2
+    sm_axis_sq = ((1 + planet_radius) ** 2 - impact_param ** 2)/sin_sq + impact_param ** 2 / beta ** 2
+    sm_axis = np.sqrt(sm_axis_sq)
 
-    # Duration in the case of a circular orbit.
-    sin_sq = np.sin(transit_duration/per*np.pi)**2
-    asq = ((1 + p) ** 2 - b ** 2)/sin_sq + b ** 2
-
-    return np.sqrt(asq)
+    return sm_axis
 
 
-def axis2density(a, per):
-    """ Convert the scaled semi-major axis to the stellar density in cgs units.
+def get_stellar_density_kepler(sm_axis: Union[float, np.ndarray],
+                               period: Union[float, np.ndarray]
+                               ) -> Union[float, np.ndarray]:
+    """ Compute the stellar density using Kepler's 3rd law.
+
+    Parameters
+    ----------
+    sm_axis: float or np.ndarray
+        The semi-major axis in units of stellar radii.
+    period: float or np.ndarray
+        The orbital period in days.
+
+    Returns
+    -------
+    stellar_density: float
+        The density of the host star in g/cm^3.
+
     """
 
-    per = per * units.day
+    period_s = period * utils.SEC_IN_DAY  # seconds
 
-    factor = 3 * np.pi / (constants.G * per ** 2)
-    rho = factor * a ** 3
+    factor = 3 * np.pi / (utils.GRAVITY * period_s ** 2)
+    stellar_density = factor * sm_axis ** 3
 
-    rho = rho.to(units.g / units.cm ** 3)
+    stellar_density /= 1e3  # g/cm^3
 
-    return rho.value
+    return stellar_density
 
 
-def density2axis(rho, per):
-    """ Convert the stellar density (in cgs) to the scaled smei-major axis.
+def get_sm_axis_kepler(stellar_density: Union[float, np.ndarray],
+                       period: Union[float, np.ndarray]
+                       ) -> Union[float, np.ndarray]:
+    """ Compute the scaled semi-major axis using Kepler's 3rd law.
+
+    Parameters
+    ----------
+    stellar_density: float
+        The density of the host star in g/cm^3.
+    period: float or np.ndarray
+        The orbital period in days.
+
+    Returns
+    -------
+    sm_axis: float or np.ndarray
+        The semi-major axis in units of stellar radii.
+
     """
 
-    rho = rho * units.g / units.cm ** 3
-    per = per * units.day
+    stellar_density *= 1e3  # kg/m^3
+    period_s = period * utils.SEC_IN_DAY  # seconds
 
-    factor = 3 * np.pi / (constants.G * per ** 2)
-    a = (rho / factor) ** (1 / 3)
-    a = a.decompose()
+    factor = 3 * np.pi / (utils.GRAVITY * period_s ** 2)
+    sm_axis = (stellar_density / factor) ** (1 / 3)
 
-    return a.value
+    return sm_axis
 
 
 def analytic_transit_model(time: np.ndarray,
@@ -159,7 +278,7 @@ def analytic_transit_model(time: np.ndarray,
     Omega = transit_params['Omega']
 
     # Derived parameters.
-    inc = impact2inc(b, a, ecc, w)
+    inc = get_orbital_inclination(b, a, ecc, w)
 
     # Create an instance of the batman transit model.
     params = batman.TransitParams()
@@ -184,9 +303,9 @@ def analytic_transit_model(time: np.ndarray,
     if return_orbit:
 
         # Convert angles to radians.
-        inc = inc * DEG2RAD
-        w = w * DEG2RAD
-        Omega = Omega * DEG2RAD
+        inc = np.deg2rad(inc)
+        w = np.deg2rad(w)
+        Omega = np.deg2rad(Omega)
 
         # Compute the planets orbit in the plane of the sky.
         nu = model.get_true_anomaly()

@@ -258,16 +258,16 @@ def _make_transit_templates(mid_times: np.ndarray,
     bls_template = np.zeros((nrows, ncols))
     tls_template = np.zeros((nrows, ncols))
     wls_template = np.zeros((nrows, ncols))
-    for row_idx, duration in enumerate(duration_grid):
+    for row_idx, transit_duration in enumerate(duration_grid):
 
         # Compute the scaled semi-major axis that gives the required duration.
-        axis = models.duration2axis(duration,
-                                    transit_params['P'],
-                                    transit_params['R_p/R_s'],
-                                    transit_params['b'],
-                                    transit_params['ecc'],
-                                    transit_params['w'])
-        transit_params['a/R_s'] = axis
+        sm_axis = models.get_sm_axis(transit_params['P'],
+                                     transit_duration,
+                                     transit_params['R_p/R_s'],
+                                     transit_params['b'],
+                                     transit_params['ecc'],
+                                     transit_params['w'])
+        transit_params['a/R_s'] = sm_axis
 
         # Evaluate the transit model.
         result = models.analytic_transit_model(mid_times,
