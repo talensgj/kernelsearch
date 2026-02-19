@@ -6,6 +6,7 @@ from collections import namedtuple
 from timeit import default_timer as timer
 
 import numpy as np
+from numpy.typing import ArrayLike
 from scipy import signal
 import multiprocessing as mp
 
@@ -61,7 +62,7 @@ class PeriodGroup:
 
 
 def get_duration_idx(duration_grid: np.ndarray,
-                     duration_lims: tuple[float, float],
+                     duration_lims: ArrayLike,
                      ) -> tuple[int, int]:
     """ Get the indices of a minimum an maximum duration into a duration grid.
 
@@ -216,7 +217,7 @@ def _make_transit_templates(mid_times: np.ndarray,
                             transit_params: dict,
                             supersample_factor: int,
                             ld_type: utils.LDType,
-                            ld_pars: tuple,
+                            ld_pars: ArrayLike,
                             exp_time: float,
                             exp_cadence: float,
                             search_mode: utils.SearchMode = 'TLS',
@@ -314,7 +315,7 @@ def make_template_grid(periods: np.ndarray,
                        exp_time: float,
                        exp_cadence: float,
                        ld_type: utils.LDType = 'linear',
-                       ld_pars: tuple = (0.6,),
+                       ld_pars: ArrayLike = (0.6,),
                        ref_depth: float = 0.005,
                        search_mode: utils.SearchMode = 'TLS',
                        smooth_window: Optional[float] = None,
@@ -416,7 +417,7 @@ def _search_period(period: np.ndarray,
                    exp_time: float,
                    exp_cadence: float,
                    ld_type: utils.LDType,
-                   ld_pars: tuple,
+                   ld_pars: ArrayLike,
                    debug: bool = False
                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """ Perform the transit search for a single period value.
@@ -835,7 +836,7 @@ def transit_search(time: np.ndarray,
                    period_group_sampling: int = 3,
                    normalisation: utils.Normalisation = 'umbra',
                    ld_type: utils.LDType = 'linear',
-                   ld_pars: tuple = (0.6,),
+                   ld_pars: ArrayLike = (0.6,),
                    search_mode: utils.SearchMode = 'TLS',
                    short_periods: utils.ShortPeriods = 'skip',
                    smooth_window: Optional[float] = None,
@@ -900,7 +901,7 @@ def transit_search(time: np.ndarray,
     ld_type: str
         The limb-darkening law to use for the TLS or WLS templates. Can be any
         law valid in the batman package (default: 'linear').
-    ld_pars: str
+    ld_pars: array-like
         The limb-darkening parameters to use (default: (0.6,)).
     search_mode: str
         The type of transit templates to use, can be 'BLS', 'TLS' or 'WLS'
