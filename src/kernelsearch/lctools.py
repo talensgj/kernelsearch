@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, get_args
 
 import numpy as np
 from scipy import signal, interpolate
@@ -41,7 +41,7 @@ def bin_lightcurve(time: np.ndarray,
     """
 
     # Check the bin_method is valid.
-    if bin_method not in utils.BinMethod.get_args():
+    if bin_method not in get_args(utils.BinMethod):
         raise ValueError(f"Unknown binning method: {bin_method}.")
 
     # Check min_points is valid.

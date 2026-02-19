@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, get_args
 from functools import partial
 from dataclasses import dataclass
 from collections import namedtuple
@@ -321,7 +321,7 @@ def make_template_grid(periods: np.ndarray,
                        smooth_weights: utils.SmoothWeights = 'uniform'
                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
-    if search_mode not in utils.SearchMode.get_args():
+    if search_mode not in get_args(utils.SearchMode):
         errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(errmsg)
 
@@ -329,7 +329,7 @@ def make_template_grid(periods: np.ndarray,
         errmsg = f"Parameter smooth_window can not be None for WLS search."
         raise ValueError(errmsg)
 
-    if smooth_weights not in utils.SmoothWeights.get_args():
+    if smooth_weights not in get_args(utils.SmoothWeights):
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
@@ -928,11 +928,11 @@ def transit_search(time: np.ndarray,
 
     """
 
-    if search_mode not in utils.SearchMode.get_args():
+    if search_mode not in get_args(utils.SearchMode):
         errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(errmsg)
 
-    if short_periods not in utils.ShortPeriods.get_args():
+    if short_periods not in get_args(utils.ShortPeriods):
         errmsg = f"Invalid value '{short_periods}' for parameter short_periods."
         raise ValueError(errmsg)
 
@@ -944,11 +944,11 @@ def transit_search(time: np.ndarray,
         LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
         smooth_window = None
 
-    if normalisation not in utils.Normalisation.get_args():
+    if normalisation not in get_args(utils.Normalisation):
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
         raise ValueError(errmsg)
 
-    if smooth_weights not in utils.SmoothWeights.get_args():
+    if smooth_weights not in get_args(utils.SmoothWeights):
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
