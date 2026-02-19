@@ -3,8 +3,8 @@ from typing import Union, Optional
 from collections import namedtuple
 
 import numpy as np
-from astropy import constants
 
+from . import utils
 
 #############
 #  LOGGING  #
@@ -19,23 +19,14 @@ LOGERROR = logger.error
 LOGEXCEPTION = logger.exception
 
 
-###########
-# GLOBALS #
-###########
-
-GRAVITY = constants.G.value  # m^3 kg^-1 s^-2
-SECINDAY = 24. * 60. * 60.  # s/day
-MIN_PERIOD = 0.1  # days
-
-
 ##############
 # EPOCH GRID #
 ##############
 
 def get_epoch_step(min_duration: float,
                    epoch_sampling: int = 20,
-                   min_epoch_step: float = 60/SECINDAY,  # TODO Value ok?
-                   max_epoch_step: float = 300/SECINDAY  # TODO Value ok?
+                   min_epoch_step: float = 1 / utils.SEC_IN_DAY,
+                   max_epoch_step: float = 5 / utils.SEC_IN_DAY
                    ) -> float:
     """ Compute a suitable epoch step based on the shortest duration searched.
 
@@ -91,8 +82,8 @@ def get_min_period(stellar_density: float, min_separation: float = 3.) -> float:
 
     stellar_density *= 1e3  # kg/m^3
 
-    min_period = np.sqrt(min_separation ** 3 * 3 * np.pi / GRAVITY / stellar_density)  # seconds
-    min_period /= SECINDAY  # days
+    min_period = np.sqrt(min_separation ** 3 * 3 * np.pi / utils.GRAVITY / stellar_density)  # seconds
+    min_period /= utils.SEC_IN_DAY  # days
 
     return min_period
 
@@ -132,8 +123,8 @@ def _period_grid_constants(stellar_density: float,
 
     stellar_density *= 1e3  # kg/m^3
 
-    a_cubed = 3 / np.pi ** 2 * 1 / (GRAVITY * stellar_density)
-    a_cubed /= SECINDAY ** 2
+    a_cubed = 3 / np.pi ** 2 * 1 / (utils.GRAVITY * stellar_density)
+    a_cubed /= utils.SEC_IN_DAY ** 2
 
     A = a_cubed ** (1/3) / (baseline * oversampling)
     C = min_freq ** (1/3) - A/3
@@ -179,19 +170,30 @@ def get_period_grid(max_stellar_density: float,
 
     """
 
+    if min_separation < 1:
+        msg = f"Parameter min_separation should be > 1."
+        ValueError(msg)
+
+    if min_separation < utils.MIN_SEPARATION:
+        LOGWARNING(f"Orbits with min_separation < {utils.MIN_SEPARATION} are unlikely to be stable.")
+
     if min_period is None:
         min_period = get_min_period(max_stellar_density, min_separation)
 
     if max_period is None:
         max_period = get_max_period(baseline, min_transits)
 
-    if min_period < MIN_PERIOD:
-        min_period = get_min_period(max_stellar_density, min_separation)
-        LOGWARNING(f"Provided minimum period is less than {MIN_PERIOD} days, using {min_period} days instead.")
+    tmp_period = get_min_period(max_stellar_density, min_separation)
+    if min_period < tmp_period:
+        min_period = tmp_period
+        LOGWARNING(f"Provided minimum period is less than minimum stable orbit,"
+                   f" using the {tmp_period} days stable orbit instead."
+                   f" For shorter periods try reducing min_separation.")
 
     if max_period > baseline:
         max_period = baseline
-        LOGWARNING(f"Provided maximum period exceeds the baseline, using the {max_period} days baseline instead.")
+        LOGWARNING(f"Provided maximum period exceeds the baseline,"
+                   f" using the {max_period} days baseline instead.")
 
     if max_period < min_period:
         msg = f"The maximum period is less than the minimum period, please fix your inputs."
@@ -244,9 +246,9 @@ def get_sm_axis(stellar_density: float,
     """
 
     stellar_density *= 1e3  # kg/m^3
-    period_s = period * SECINDAY  # seconds
+    period_s = period * utils.SEC_IN_DAY  # seconds
 
-    factor = 3 * np.pi / (GRAVITY * period_s ** 2)
+    factor = 3 * np.pi / (utils.GRAVITY * period_s ** 2)
     sm_axis = (stellar_density / factor) ** (1 / 3)
 
     return sm_axis

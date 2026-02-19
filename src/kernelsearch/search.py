@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Literal
+from typing import Optional
 from functools import partial
 from dataclasses import dataclass
 from collections import namedtuple
@@ -9,9 +9,7 @@ import numpy as np
 from scipy import signal
 import multiprocessing as mp
 
-from astropy import constants
-
-from . import grid, models, diagnostics
+from . import grid, utils, models, diagnostics
 
 
 #############
@@ -25,22 +23,6 @@ LOGINFO = logger.info
 LOGWARNING = logger.warning
 LOGERROR = logger.error
 LOGEXCEPTION = logger.exception
-
-
-###########
-# GLOBALS #
-###########
-
-DEBUG = False
-SECINDAY = 24*3600
-SOLAR_DENSITY = (constants.M_sun/(4/3 * np.pi * constants.R_sun ** 3)).to('g/cm^3').value
-MAX_DUTY_CYCLE = 0.30
-
-LDType = Literal["uniform", "linear", "quadratic", "square-root", "logarithmic", "exponential", "power2", "nonlinear"]
-SearchMode = Literal["BLS", "TLS", "WLS"]
-ShortPeriods = Literal["skip", "TLS", "WLS"]
-SmoothWeights = Literal["uniform", "tricube"]
-Normalisation = Literal["simple", "umbra"]
 
 
 def evaluate_template(time,
@@ -67,7 +49,7 @@ class PeriodGroup:
     period_idx: tuple[int, int]
     duration_idx: tuple[int, int]
     epoch_step: float
-    search_mode: SearchMode = None
+    search_mode: utils.SearchMode = None
 
     def get_period_group(self, period_grid):
         imin, imax = self.period_idx
@@ -114,8 +96,8 @@ def make_period_groups(period_grid: np.ndarray,
                        frac_duration_step: float = 1.05,
                        period_group_sampling: int = 3,
                        epoch_sampling: int = 20,
-                       min_epoch_step: float = 60 / SECINDAY,
-                       max_epoch_step: float = 300 / SECINDAY,
+                       min_epoch_step: float = 1 / utils.MIN_IN_DAY,
+                       max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                        smooth_window: Optional[float] = None
                        ) -> list[PeriodGroup]:
     """ Split the full period range into groups to avoid cases
@@ -161,8 +143,8 @@ def make_period_groups(period_grid: np.ndarray,
 
     # Check that the duty cycle for all possible periods does not exceed the maximum value.
     duty_cycle = (excess_duration_ratio * duration_lims.long + exp_time)/period_grid
-    if np.any(duty_cycle > MAX_DUTY_CYCLE):
-        msg = f"Longest duty cycle > {MAX_DUTY_CYCLE:.2f}, reducing period_group_sampling is recommended."
+    if np.any(duty_cycle > utils.MAX_DUTY_CYCLE):
+        msg = f"Longest duty cycle > {utils.MAX_DUTY_CYCLE:.2f}, reducing period_group_sampling is recommended."
         LOGWARNING(msg)
 
     # Identify the shortest period which is guaranteed to have only 1 transit in the smooth window.
@@ -175,7 +157,7 @@ def make_period_groups(period_grid: np.ndarray,
         # Index of shortest period with baseline > smooth_window.
         icut = np.searchsorted(baseline, smooth_window, side='right')
 
-        if DEBUG:
+        if utils.DEBUG:
             diagnostics.plot_oot_baseline(period_grid, baseline, smooth_window)
 
     imin = 0
@@ -204,7 +186,7 @@ def make_period_groups(period_grid: np.ndarray,
     if imin != num_periods:
         intervals.append((imin, num_periods))
 
-    if DEBUG:
+    if utils.DEBUG:
         diagnostics.plot_period_groups(period_grid, duration_lims, intervals, icut)
 
     # Now that we know the period intervals, generate the auxillary data.
@@ -233,13 +215,13 @@ def _make_transit_templates(mid_times: np.ndarray,
                             duration_grid: np.ndarray,
                             transit_params: dict,
                             supersample_factor: int,
-                            ld_type: LDType,
+                            ld_type: utils.LDType,
                             ld_pars: tuple,
                             exp_time: float,
                             exp_cadence: float,
-                            search_mode: SearchMode = 'TLS',
+                            search_mode: utils.SearchMode = 'TLS',
                             smooth_window: Optional[float] = None,
-                            smooth_weights: SmoothWeights = 'uniform'):
+                            smooth_weights: utils.SmoothWeights = 'uniform'):
 
     if search_mode == 'WLS':
 
@@ -331,15 +313,15 @@ def make_template_grid(periods: np.ndarray,
                        epoch_step: float,
                        exp_time: float,
                        exp_cadence: float,
-                       ld_type: LDType = 'linear',
+                       ld_type: utils.LDType = 'linear',
                        ld_pars: tuple = (0.6,),
                        ref_depth: float = 0.005,
-                       search_mode: SearchMode = 'TLS',
+                       search_mode: utils.SearchMode = 'TLS',
                        smooth_window: Optional[float] = None,
-                       smooth_weights: SmoothWeights = 'uniform'
+                       smooth_weights: utils.SmoothWeights = 'uniform'
                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
-    if search_mode not in ['BLS', 'TLS', 'WLS']:
+    if search_mode not in utils.SearchMode.get_args():
         errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(errmsg)
 
@@ -347,7 +329,7 @@ def make_template_grid(periods: np.ndarray,
         errmsg = f"Parameter smooth_window can not be None for WLS search."
         raise ValueError(errmsg)
 
-    if smooth_weights not in ['uniform', 'tricube']:
+    if smooth_weights not in utils.SmoothWeights.get_args():
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
@@ -358,7 +340,7 @@ def make_template_grid(periods: np.ndarray,
     baseline = min_period - max_duration - exp_time
     if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
         LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
-        search_mode: SearchMode = 'TLS'
+        search_mode: utils.SearchMode = 'TLS'
 
     if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
@@ -384,7 +366,7 @@ def make_template_grid(periods: np.ndarray,
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    supersample_factor = np.ceil(exp_time * SECINDAY / 10.).astype('int')
+    supersample_factor = np.ceil(exp_time * utils.SEC_IN_DAY / 10.).astype('int')
 
     # Compute the transit templates.
     result = _make_transit_templates(mid_times,
@@ -401,6 +383,7 @@ def make_template_grid(periods: np.ndarray,
     bls_template, tls_template, wls_template = result
 
     # Choose the final template based on the search mode.
+    template_models = None
     if search_mode == 'BLS':
         template_models = (bls_template - 1)/ref_depth
     if search_mode == 'TLS':
@@ -427,12 +410,12 @@ def _search_period(period: np.ndarray,
                    templates: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
                    min_points: np.ndarray,
                    is_short_period: bool,
-                   normalisation: Normalisation,
+                   normalisation: utils.Normalisation,
                    smooth_window: float,
-                   smooth_weights: SmoothWeights,
+                   smooth_weights: utils.SmoothWeights,
                    exp_time: float,
                    exp_cadence: float,
-                   ld_type: LDType,
+                   ld_type: utils.LDType,
                    ld_pars: tuple,
                    debug: bool = False
                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -845,18 +828,18 @@ def transit_search(time: np.ndarray,
                    min_period: Optional[float] = None,
                    max_period: Optional[float] = None,
                    epoch_sampling: int = 20,
-                   min_epoch_step: float = 60/SECINDAY,
-                   max_epoch_step: float = 300/SECINDAY,
+                   min_epoch_step: float = 1 / utils.MIN_IN_DAY,
+                   max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                    circular_orbits: bool = True,
                    frac_duration_step: float = 1.05,
                    period_group_sampling: int = 3,
-                   normalisation: Normalisation = 'umbra',
-                   ld_type: LDType = 'linear',
+                   normalisation: utils.Normalisation = 'umbra',
+                   ld_type: utils.LDType = 'linear',
                    ld_pars: tuple = (0.6,),
-                   search_mode: SearchMode = 'TLS',
-                   short_periods: ShortPeriods = 'skip',
+                   search_mode: utils.SearchMode = 'TLS',
+                   short_periods: utils.ShortPeriods = 'skip',
                    smooth_window: Optional[float] = None,
-                   smooth_weights: SmoothWeights = 'uniform',
+                   smooth_weights: utils.SmoothWeights = 'uniform',
                    num_processes: Optional[int] = None,
                    ) -> tuple[SearchResult, SearchResult]:
     """ Perform a transit search on the provided data.
@@ -945,11 +928,11 @@ def transit_search(time: np.ndarray,
 
     """
 
-    if search_mode not in ['BLS', 'TLS', 'WLS']:
+    if search_mode not in utils.SearchMode.get_args():
         errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(errmsg)
 
-    if short_periods not in ['skip', 'TLS', 'WLS']:
+    if short_periods not in utils.ShortPeriods.get_args():
         errmsg = f"Invalid value '{short_periods}' for parameter short_periods."
         raise ValueError(errmsg)
 
@@ -961,11 +944,11 @@ def transit_search(time: np.ndarray,
         LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
         smooth_window = None
 
-    if normalisation not in ['simple', 'umbra']:
+    if normalisation not in utils.Normalisation.get_args():
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
         raise ValueError(errmsg)
 
-    if smooth_weights not in ['uniform', 'tricube']:
+    if smooth_weights not in utils.SmoothWeights.get_args():
         errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
         raise ValueError(errmsg)
 
@@ -974,8 +957,8 @@ def transit_search(time: np.ndarray,
     delta_time, delta_flux_weighted, weights_norm, tstart, flux_mean, weights_sum, chisq0 = result
 
     # Compute stellar densities from the stellar mass and radii ranges.
-    min_stellar_density = SOLAR_DENSITY * min_stellar_mass / max_stellar_radius ** 3
-    max_stellar_density = SOLAR_DENSITY * max_stellar_mass / min_stellar_radius ** 3
+    min_stellar_density = utils.SOLAR_DENSITY * min_stellar_mass / max_stellar_radius ** 3
+    max_stellar_density = utils.SOLAR_DENSITY * max_stellar_mass / min_stellar_radius ** 3
     stellar_density_bounds = (min_stellar_density, max_stellar_density)
     stellar_radius_bounds = (max_stellar_radius, min_stellar_radius)  # The max radius goes first because it matches the minimum density.
 
@@ -1074,10 +1057,10 @@ def transit_search(time: np.ndarray,
                 LOGINFO("  Skipping short periods in WLS search.")
                 continue
             if short_periods == 'TLS':
-                search_mode_: SearchMode = 'TLS'
+                search_mode_: utils.SearchMode = 'TLS'
                 LOGINFO("  Using TLS templates for short periods in WLS search.")
             if short_periods == 'WLS':
-                search_mode_: SearchMode = 'TLS'
+                search_mode_: utils.SearchMode = 'TLS'
                 is_short_period = True
                 LOGINFO("  Using WLS templates for short periods in WLS search.")
 
@@ -1085,7 +1068,7 @@ def transit_search(time: np.ndarray,
 
         LOGDEBUG(f"  Searching {len(period_group)} periods between {period_group[0]:.3f} days to {period_group[-1]:.3f} days.")
         LOGDEBUG(f"  Searching {len(duration_group)} durations between {duration_group[0]:.2f} days and {duration_group[-1]:.2f} days.")
-        LOGDEBUG(f"  Searching using an epoch step of {epoch_step * SECINDAY / 60:.1f} minutes.")
+        LOGDEBUG(f"  Searching using an epoch step of {epoch_step * utils.SEC_IN_DAY / 60:.1f} minutes.")
 
         # Compute the template models for the current period set.
         templates = make_template_grid(period_group,
@@ -1160,7 +1143,7 @@ def transit_search(time: np.ndarray,
     # Convert phase relative to start of observation to midpoint of first transit.
     midpoint_vals = tstart + period_grid[:, np.newaxis]*np.mod(phase_vals, 1)
 
-    if DEBUG:
+    if utils.DEBUG:
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
 
     # Generate the final periodogram for circular orbits.
@@ -1178,7 +1161,7 @@ def transit_search(time: np.ndarray,
                                          best_vals_circ,
                                          duration_lims=duration_circ)
 
-    if DEBUG:
+    if utils.DEBUG:
         diagnostics.plot_1d_periodogram(search_result_circ, duration_circ, duration_full)
 
     # Generate the final peridogram for the full duration range.
@@ -1199,7 +1182,7 @@ def transit_search(time: np.ndarray,
                                              duration_lims=duration_full,
                                              duration_circ=duration_circ)
 
-    if DEBUG and search_result_full is not None:
+    if utils.DEBUG and search_result_full is not None:
         diagnostics.plot_1d_periodogram(search_result_full, duration_circ, duration_full)
 
     return search_result_circ, search_result_full
