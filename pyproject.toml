@@ -22,6 +22,5 @@ dependencies = [
     "wotan",
     "astropy",
     "batman-package",
-    "transitleastsquares",
     "matplotlib",
     ]
