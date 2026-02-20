@@ -26,22 +26,6 @@ LOGERROR = logger.error
 LOGEXCEPTION = logger.exception
 
 
-def evaluate_template(time,
-                      period,
-                      midpoint,
-                      depth,
-                      flux_level,
-                      template_edges,
-                      template_model):
-
-    phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
-    bin_idx = np.searchsorted(template_edges / period + 0.5, phase)  # Phase centered at 0.5
-    template_model = np.append(np.append(0, template_model), 0)
-    flux = depth*template_model[bin_idx] + flux_level
-
-    return phase, flux
-
-
 @dataclass
 class PeriodGroup:
     """ Class for tracking properties of period groups.
@@ -210,192 +194,6 @@ def make_period_groups(period_grid: np.ndarray,
         period_groups.append(group)
 
     return period_groups
-        
-        
-def _make_transit_templates(mid_times: np.ndarray,
-                            duration_grid: np.ndarray,
-                            transit_params: dict,
-                            supersample_factor: int,
-                            ld_type: utils.LDType,
-                            ld_pars: ArrayLike,
-                            exp_time: float,
-                            exp_cadence: float,
-                            search_mode: utils.SearchMode = 'TLS',
-                            smooth_window: Optional[float] = None,
-                            smooth_weights: utils.SmoothWeights = 'uniform'):
-
-    if search_mode == 'WLS':
-
-        # Create the grid of exposures inside the smoothing window.
-        nevals = np.ceil(smooth_window / exp_cadence).astype('int')
-        if nevals % 2 == 0:
-            nevals += 1
-
-        mid_idx = nevals // 2
-        dt = (np.arange(nevals) - mid_idx) * exp_cadence
-
-        # Compute the weights across the smoothing window.
-        if smooth_weights == 'uniform':
-            weights = np.ones_like(dt)
-
-        if smooth_weights == 'tricube':
-            radius = smooth_window/2
-            weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt/radius)**3)**3, 0)
-
-        # Normalize the weights.
-        weights = weights/np.sum(weights)
-
-        # Make the dt and weights values 2D.
-        dt = dt[:, np.newaxis]
-        weights = weights[:, np.newaxis]
-
-        # Get the full array of transit times needed to compute warped transits.
-        dt = dt + mid_times[np.newaxis, :]
-        dt_shape = dt.shape
-        dt = dt.ravel()
-
-    nrows = len(duration_grid)
-    ncols = len(mid_times)
-    bls_template = np.zeros((nrows, ncols))
-    tls_template = np.zeros((nrows, ncols))
-    wls_template = np.zeros((nrows, ncols))
-    for row_idx, transit_duration in enumerate(duration_grid):
-
-        # Compute the scaled semi-major axis that gives the required duration.
-        sm_axis = models.get_sm_axis(transit_params['P'],
-                                     transit_duration,
-                                     transit_params['R_p/R_s'],
-                                     transit_params['b'],
-                                     transit_params['ecc'],
-                                     transit_params['w'])
-        transit_params['a/R_s'] = sm_axis
-
-        # Evaluate the transit model.
-        result = models.analytic_transit_model(mid_times,
-                                               transit_params,
-                                               'uniform',
-                                               [],
-                                               exp_time=exp_time,
-                                               supersample_factor=supersample_factor,
-                                               max_err=1.)
-        bls_template[row_idx] = result[0]
-
-        result = models.analytic_transit_model(mid_times,
-                                               transit_params,
-                                               ld_type,
-                                               ld_pars,
-                                               exp_time=exp_time,
-                                               supersample_factor=supersample_factor,
-                                               max_err=1.)
-        fac = result[5]
-        tls_template[row_idx] = result[0]
-
-        if search_mode == 'WLS':
-
-            # Evaluate the transit model.
-            result = models.analytic_transit_model(dt,
-                                                   transit_params,
-                                                   ld_type,
-                                                   ld_pars,
-                                                   exp_time=exp_time,
-                                                   supersample_factor=supersample_factor,
-                                                   fac=fac,
-                                                   max_err=1.)
-
-            flux_dt = result[0]
-            flux_dt = flux_dt.reshape(dt_shape)
-            wls_template[row_idx] = flux_dt[mid_idx]/np.sum(weights*flux_dt, axis=0)
-            
-    return bls_template, tls_template, wls_template
-
-
-def make_template_grid(periods: np.ndarray,
-                       duration_grid: np.ndarray,
-                       epoch_step: float,
-                       exp_time: float,
-                       exp_cadence: float,
-                       ld_type: utils.LDType = 'linear',
-                       ld_pars: ArrayLike = (0.6,),
-                       ref_depth: float = 0.005,
-                       search_mode: utils.SearchMode = 'TLS',
-                       smooth_window: Optional[float] = None,
-                       smooth_weights: utils.SmoothWeights = 'uniform'
-                       ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-
-    if search_mode not in get_args(utils.SearchMode):
-        errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
-        raise ValueError(errmsg)
-
-    if search_mode == 'WLS' and smooth_window is None:
-        errmsg = f"Parameter smooth_window can not be None for WLS search."
-        raise ValueError(errmsg)
-
-    if smooth_weights not in get_args(utils.SmoothWeights):
-        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
-        raise ValueError(errmsg)
-
-    min_period = np.amin(periods)
-    max_period = np.amax(periods)
-    max_duration = np.amax(duration_grid)
-
-    baseline = min_period - max_duration - exp_time
-    if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
-        LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
-        search_mode: utils.SearchMode = 'TLS'
-
-    if search_mode in ['BLS', 'TLS']:
-        delta_time = max_duration + exp_time
-    else:
-        delta_time = max_duration + exp_time + smooth_window
-
-    if periods.size == 1:
-        delta_time = np.minimum(delta_time, max_period)
-
-    # Determine the times at which to evaluate the template.
-    nbins = np.ceil(delta_time/epoch_step).astype('int')
-    template_edges = np.linspace(-delta_time/2, delta_time/2, nbins + 1)
-    mid_times = (template_edges[:-1] + template_edges[1:])/2
-
-    # Set up the transit parameters.
-    transit_params = dict()
-    transit_params['T_0'] = 0.
-    transit_params['P'] = max_period
-    transit_params['R_p/R_s'] = np.sqrt(ref_depth)
-    transit_params['a/R_s'] = 0.
-    transit_params['b'] = 0.
-    transit_params['ecc'] = 0.
-    transit_params['w'] = 90.
-    transit_params['Omega'] = 0.
-
-    supersample_factor = np.ceil(exp_time * utils.SEC_IN_DAY / 10.).astype('int')
-
-    # Compute the transit templates.
-    result = _make_transit_templates(mid_times,
-                                     duration_grid,
-                                     transit_params,
-                                     supersample_factor,
-                                     ld_type,
-                                     ld_pars,
-                                     exp_time,
-                                     exp_cadence,
-                                     search_mode=search_mode,
-                                     smooth_window=smooth_window,
-                                     smooth_weights=smooth_weights)
-    bls_template, tls_template, wls_template = result
-
-    # Choose the final template based on the search mode.
-    template_models = None
-    if search_mode == 'BLS':
-        template_models = (bls_template - 1)/ref_depth
-    if search_mode == 'TLS':
-        template_models = (tls_template - 1)/ref_depth
-    if search_mode == 'WLS':
-        template_models = (wls_template - 1)/ref_depth
-
-    template_square = template_models ** 2
-    template_count = (bls_template - 1) < 0
-
-    return template_edges, template_models, template_square, template_count
 
 
 def _search_period(period: np.ndarray,
@@ -425,16 +223,16 @@ def _search_period(period: np.ndarray,
 
     # At short periods WLS requires special treatment.
     if is_short_period:
-        templates = make_template_grid(period,
-                                       duration_grid,
-                                       epoch_step,
-                                       exp_time,
-                                       exp_cadence,
-                                       ld_type=ld_type,
-                                       ld_pars=ld_pars,
-                                       search_mode='WLS',
-                                       smooth_window=smooth_window,
-                                       smooth_weights=smooth_weights)
+        templates = models.get_lstsq_templates(period,
+                                               duration_grid,
+                                               epoch_step,
+                                               exp_time,
+                                               exp_cadence,
+                                               ld_type=ld_type,
+                                               ld_pars=ld_pars,
+                                               search_mode='WLS',
+                                               smooth_window=smooth_window,
+                                               smooth_weights=smooth_weights)
 
     # Unpack the transit templates.
     template_edges = templates[0]
@@ -780,13 +578,13 @@ def _1d_periodogram(time: np.ndarray,
     best_flux_level = flux_level_vals[ipeak]
 
     _, template_edges, template_model = best_template_vals
-    model_phase, model_flux = evaluate_template(time,
-                                                best_period,
-                                                best_midpoint,
-                                                best_depth,
-                                                best_flux_level,
-                                                template_edges,
-                                                template_model)
+    model_phase, model_flux = models.evaluate_lstsq_template(time,
+                                                             best_period,
+                                                             best_midpoint,
+                                                             best_depth,
+                                                             best_flux_level,
+                                                             template_edges,
+                                                             template_model)
 
     # Save the final periodogram.
     search_result = SearchResult(periods=period_grid,
@@ -853,9 +651,9 @@ def transit_search(time: np.ndarray,
         The flux values of the observations.
     flux_err: np.ndarray
         The flux uncertainties of the observations.
-    exp_time:
+    exp_time: float
         The exposure time of the observations in days.
-    exp_cadence:
+    exp_cadence: float
         The exposure cadence of the observations in days.
     min_stellar_radius: float
         The lower bound on the stellar radius in solar units.
@@ -1072,16 +870,16 @@ def transit_search(time: np.ndarray,
         LOGDEBUG(f"  Searching using an epoch step of {epoch_step * utils.SEC_IN_DAY / 60:.1f} minutes.")
 
         # Compute the template models for the current period set.
-        templates = make_template_grid(period_group,
-                                       duration_group,
-                                       epoch_step,
-                                       exp_time,
-                                       exp_cadence,
-                                       ld_type=ld_type,
-                                       ld_pars=ld_pars,
-                                       search_mode=search_mode_,
-                                       smooth_window=smooth_window,
-                                       smooth_weights=smooth_weights)
+        templates = models.get_lstsq_templates(period_group,
+                                               duration_group,
+                                               epoch_step,
+                                               exp_time,
+                                               exp_cadence,
+                                               ld_type=ld_type,
+                                               ld_pars=ld_pars,
+                                               search_mode=search_mode_,
+                                               smooth_window=smooth_window,
+                                               smooth_weights=smooth_weights)
 
         kwargs = dict()
         kwargs['delta_time'] = delta_time

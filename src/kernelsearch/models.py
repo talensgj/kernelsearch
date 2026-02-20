@@ -1,3 +1,4 @@
+import logging
 from typing import Union, Optional, get_args
 
 import numpy as np
@@ -7,7 +8,17 @@ import batman
 
 from . import utils
 
-RNG = np.random.default_rng(5627323756)
+#############
+#  LOGGING  #
+#############
+
+logger = logging.getLogger(__name__)
+
+LOGDEBUG = logger.debug
+LOGINFO = logger.info
+LOGWARNING = logger.warning
+LOGERROR = logger.error
+LOGEXCEPTION = logger.exception
 
 
 def _ecc_factors(eccentricity: Union[float, np.ndarray],
@@ -316,3 +327,364 @@ def analytic_transit_model(time: np.ndarray,
         yp = xi * np.sin(Omega) + yi * np.cos(Omega)
 
     return flux, nu, xp, yp, params, model.fac
+
+
+def _warped_lstsq_init(mid_times: np.ndarray,
+                       exp_cadence: float,
+                       smooth_window: float,
+                       smooth_weights: utils.SmoothWeights
+                       ) -> tuple[np.ndarray, np.ndarray]:
+    """ Prepare the special time and weights arrays for computing WLS templates.
+
+    Parameters
+    ----------
+    mid_times: np.ndarray
+        The times at which to evaluate the transit model.
+    exp_cadence: float
+        The exposure cadence of the observations in days.
+    smooth_window: float
+        The smoothing window to use when generating WLS templates, should match
+        whatever filter was applied to the data.
+    smooth_weights: str
+        The weights to apply across the smoothing window when generating WLS
+        templates, should match whatever filter was applied to the data.
+
+    Returns
+    -------
+    wls_times: np.ndarray
+        The times at which to evaluate the transit model in order to generate
+        warped transit shapes.
+    wls_weights: np.ndarray
+        The weights to use when generating warped transit shapes.
+
+    """
+
+    # Create the grid of exposures inside the smoothing window.
+    nevals = np.ceil(smooth_window / exp_cadence).astype('int')
+    if nevals % 2 == 0:
+        nevals += 1
+
+    mid_idx = nevals // 2
+    dt = (np.arange(nevals) - mid_idx) * exp_cadence
+
+    # Compute the weights across the smoothing window.
+    if smooth_weights == 'uniform':
+        weights = np.ones_like(dt)
+
+    if smooth_weights == 'tricube':
+        radius = smooth_window / 2
+        weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt / radius) ** 3) ** 3, 0)
+
+    # Normalise the weights.
+    weights = weights / np.sum(weights)
+
+    # Get the final arrays of transit times and weights to compute warped transits.
+    wls_times = dt[:, np.newaxis] + mid_times[np.newaxis, :]
+    wls_weights = weights[:, np.newaxis]
+
+    return wls_times, wls_weights
+
+
+def _lstsq_templates(mid_times: np.ndarray,
+                     duration_grid: np.ndarray,
+                     transit_params: dict,
+                     supersample_factor: int,
+                     ld_type: utils.LDType,
+                     ld_pars: ArrayLike,
+                     exp_time: float,
+                     exp_cadence: float,
+                     smooth_window: Optional[float],
+                     smooth_weights: utils.SmoothWeights
+                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """ Compute the transit shapes needed to generate the least-squares templates.
+
+    Parameters
+    ----------
+    mid_times: np.ndarray
+        The times at which to evaluate the transit model.
+    duration_grid: np.ndarray
+        The durations for which to generate transits.
+    transit_params: dict
+        The transit parameters to use for the transit models. The semi-major
+        axis will be adjusted to match each duration.
+    supersample_factor: int
+        Value passed to batman for integrating longer exposures.
+    ld_type: str
+        The limb-darkening law to use for the TLS or WLS templates. Can be any
+        law valid in the batman package.
+    ld_pars: array-like
+        The limb-darkening parameters to use.
+    exp_time: float
+        The exposure time of the observations in days.
+    exp_cadence: float
+        The exposure cadence of the observations in days.
+    smooth_window: float or None
+        The smoothing window to use when generating WLS templates, should match
+        whatever filter was applied to the data.
+    smooth_weights: str
+        The weights to apply across the smoothing window when generating WLS
+        templates, should match whatever filter was applied to the data.
+
+    """
+
+    # Generate the time and weights arrays for WLS.
+    if smooth_window is not None:
+        result = _warped_lstsq_init(mid_times, exp_cadence, smooth_window, smooth_weights)
+        wls_times, wls_weights = result
+
+        # Need 1D time array for batman.
+        wls_times_shape = wls_times.shape
+        wls_times = wls_times.ravel()
+
+    # Create output arrays.
+    nrows = len(duration_grid)
+    ncols = len(mid_times)
+    bls_template = np.zeros((nrows, ncols))
+    tls_template = np.zeros((nrows, ncols))
+    wls_template = np.zeros((nrows, ncols))
+
+    # Iterate over the transit durations.
+    for row_idx, transit_duration in enumerate(duration_grid):
+
+        # Compute the scaled semi-major axis that gives the required duration.
+        sm_axis = get_sm_axis(transit_params['P'],
+                              transit_duration,
+                              transit_params['R_p/R_s'],
+                              transit_params['b'],
+                              transit_params['ecc'],
+                              transit_params['w'])
+        transit_params['a/R_s'] = sm_axis
+
+        # Evaluate the boxy transit model.
+        result = analytic_transit_model(mid_times,
+                                        transit_params,
+                                        'uniform',
+                                        [],
+                                        exp_time=exp_time,
+                                        supersample_factor=supersample_factor,
+                                        max_err=1.)
+        bls_template[row_idx] = result[0]
+
+        # Evaluate the transit shape.
+        result = analytic_transit_model(mid_times,
+                                        transit_params,
+                                        ld_type,
+                                        ld_pars,
+                                        exp_time=exp_time,
+                                        supersample_factor=supersample_factor,
+                                        max_err=1.)
+        fac = result[5]  # Save fac for WLS templates.
+        tls_template[row_idx] = result[0]
+
+        if smooth_window is not None:
+            # Evaluate the transit model.
+            result = analytic_transit_model(wls_times,
+                                            transit_params,
+                                            ld_type,
+                                            ld_pars,
+                                            exp_time=exp_time,
+                                            supersample_factor=supersample_factor,
+                                            fac=fac,
+                                            max_err=1.)
+
+            wls_flux = result[0]
+            wls_flux = wls_flux.reshape(wls_times_shape)
+            wls_template[row_idx] = tls_template[row_idx] / np.sum(wls_weights * wls_flux, axis=0)
+
+    return bls_template, tls_template, wls_template
+
+
+def get_lstsq_templates(periods: np.ndarray,
+                        duration_grid: np.ndarray,
+                        epoch_step: float,
+                        exp_time: float,
+                        exp_cadence: float,
+                        ld_type: utils.LDType = 'linear',
+                        ld_pars: ArrayLike = (0.6,),
+                        ref_depth: float = 5000,
+                        ref_impact: float = 0.,
+                        search_mode: utils.SearchMode = 'TLS',
+                        smooth_window: Optional[float] = None,
+                        smooth_weights: utils.SmoothWeights = 'uniform'
+                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """ Get the least-squares transit templates for the chosen search mode.
+
+    Parameters
+    ----------
+    periods: np.ndarray
+        The orbital periods for which we are computing the templates.
+    duration_grid: np.ndarray
+        The durations for which we are computing the templates.
+    epoch_step: float
+        The chosen size of the epoch step.
+    exp_time: float
+        The exposure time of the observations in days.
+    exp_cadence: float
+        The exposure cadence of the observations in days.
+    ld_type: str
+        The limb-darkening law to use for the TLS or WLS templates. Can be any
+        law valid in the batman package (default: 'linear').
+    ld_pars: array-like
+        The limb-darkening parameters to use (default: (0.6,)).
+    ref_depth: float
+        The transit depth (Rp/Rs)^2 to use when making the templates in ppm
+        (default: 5000 ppm).
+    ref_impact: float
+        The impact parameter to use when making the templates (default: 0).
+    search_mode: str
+        The type of transit templates to use, can be 'BLS', 'TLS' or 'WLS'
+        (default: 'TLS').
+    smooth_window: float or None
+        The smoothing window to use when search_mode = 'WLS', should match any
+        whatever filter was applied to the data (default: None).
+    smooth_weights: str
+        The weights to apply across the smoothing window when search_mode = 'WLS',
+        should match whatever filter was applied to the data and can be 'uniform'
+        or 'tricube' (default: 'uniform').
+
+    Returns
+    -------
+    template_edges: np.ndarray
+        The edges of the time bins in which the transit shape was computed.
+    template_model: np.ndarray
+        The scaled transit models for each duration value.
+    template_square: np.ndarray
+        The square of template_models, pre-computed for the transit search.
+    template_count: np.ndarray
+        Has value 1 in transit and 0 outside, used to count in-transit points
+        during the transit search.
+
+    """
+
+    # Convert depth from ppm to fraction.
+    ref_depth = 1e-6 * ref_depth
+
+    if search_mode not in get_args(utils.SearchMode):
+        errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
+        raise ValueError(errmsg)
+
+    if search_mode == 'WLS' and smooth_window is None:
+        errmsg = f"Parameter smooth_window can not be None for WLS search."
+        raise ValueError(errmsg)
+
+    if search_mode != 'WLS' and smooth_window is not None:
+        smooth_window = None
+        LOGWARNING(f"{search_mode} templates requested, setting parameter smooth_window = None.")
+
+    if smooth_weights not in get_args(utils.SmoothWeights):
+        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
+        raise ValueError(errmsg)
+
+    min_period = np.amin(periods)
+    max_period = np.amax(periods)
+    max_duration = np.amax(duration_grid)
+
+    baseline = min_period - max_duration - exp_time
+    if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
+        LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
+        search_mode: utils.SearchMode = 'TLS'
+
+    if search_mode in ['BLS', 'TLS']:
+        delta_time = max_duration + exp_time
+    else:
+        delta_time = max_duration + exp_time + smooth_window
+
+    if periods.size == 1:
+        delta_time = np.minimum(delta_time, max_period)
+
+    # Determine the times at which to evaluate the template.
+    nbins = np.ceil(delta_time / epoch_step).astype('int')
+    template_edges = np.linspace(-delta_time / 2, delta_time / 2, nbins + 1)
+    mid_times = (template_edges[:-1] + template_edges[1:]) / 2
+
+    # Set up the transit parameters.
+    transit_params = dict()
+    transit_params['T_0'] = 0.
+    transit_params['P'] = max_period
+    transit_params['R_p/R_s'] = np.sqrt(ref_depth)
+    transit_params['a/R_s'] = 0.
+    transit_params['b'] = ref_impact
+    transit_params['ecc'] = 0.
+    transit_params['w'] = 90.
+    transit_params['Omega'] = 0.
+
+    supersample_factor = np.ceil(exp_time * utils.SEC_IN_DAY / 10.).astype('int')
+
+    # Compute the transit templates.
+    result = _lstsq_templates(mid_times,
+                              duration_grid,
+                              transit_params,
+                              supersample_factor,
+                              ld_type,
+                              ld_pars,
+                              exp_time,
+                              exp_cadence,
+                              smooth_window,
+                              smooth_weights)
+    bls_template, tls_template, wls_template = result
+
+    # Choose the final template based on the search mode.
+    template_models = None
+    if search_mode == 'BLS':
+        template_models = (bls_template - 1) / ref_depth
+    if search_mode == 'TLS':
+        template_models = (tls_template - 1) / ref_depth
+    if search_mode == 'WLS':
+        template_models = (wls_template - 1) / ref_depth
+
+    template_square = template_models ** 2
+    template_count = (bls_template - 1) < 0
+
+    return template_edges, template_models, template_square, template_count
+
+
+def evaluate_lstsq_template(time: np.ndarray,
+                            period: float,
+                            midpoint: float,
+                            depth: float,
+                            flux_level: float,
+                            template_edges: np.ndarray,
+                            template_model: np.ndarray
+                            ) -> tuple[np.ndarray, np.ndarray]:
+    """ Evaluate a transit model from a least-squares template.
+
+    Parameters
+    ----------
+    time: np.ndarray
+        The times at which to evaluate the least-squares template.
+    period: float
+        The orbital period of the transit.
+    midpoint: float
+        The mid-transit time of the transit.
+    depth: float
+        The transit depth (Rp/Rs)^2 of the transit.
+    flux_level: float
+        The out-of-transit flux level of the transit.
+    template_edges: np.ndarray
+        The edges of the time bins in which the template was computed.
+    template_model: np.ndarray
+        The template model corresponding to the duration of the transit.
+
+    Returns
+    -------
+    phase: np.ndarray
+        The phase of the observations, with the transit centered at 0.5.
+    model: np.ndarray
+        The transit model evaluated from the least-squares template.
+
+    """
+
+    phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
+    bin_idx = np.searchsorted(template_edges / period + 0.5, phase)  # Phase centered at 0.5
+    template_model = np.append(np.append(0, template_model), 0)
+    model = depth * template_model[bin_idx] + flux_level
+
+    return phase, model
+
+
+def main():
+    return
+
+
+if __name__ == "__main__":
+    main()
