@@ -258,9 +258,12 @@ def _verify_lstsq_params(search_mode: SearchMode,
         msg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(msg)
 
-    if search_mode != 'WLS' and smooth_window is not None:
-        LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
-        smooth_window = None
+    if search_mode in ["BLS", "TLS"]:
+
+        if smooth_window is not None:
+            LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
+            smooth_window = None
+
         return smooth_window
 
     if smooth_window is None:
