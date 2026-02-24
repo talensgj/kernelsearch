@@ -299,9 +299,7 @@ def analytic_transit_model(time: np.ndarray,
 
     """
 
-    if ld_type not in get_args(utils.LDType):
-        msg = f"Invalid value '{ld_type}' for parameter ld_type."
-        raise ValueError(msg)
+    ld_pars = utils._verify_ld_params(ld_type, ld_pars)
 
     if exp_time is None:
         exp_time = 0.
@@ -585,34 +583,25 @@ def get_lstsq_templates(periods: np.ndarray,
 
     """
 
+    utils._verify_observation_params(exp_time, exp_cadence)
+    ld_pars = utils._verify_ld_params(ld_type, ld_pars)
+    smooth_window = utils._verify_lstsq_params(search_mode, smooth_window, smooth_weights, 'TLS')
+
     # Convert depth from ppm to fraction.
     ref_depth = 1e-6 * ref_depth
 
-    if search_mode not in get_args(utils.SearchMode):
-        errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
-        raise ValueError(errmsg)
-
-    if search_mode == 'WLS' and smooth_window is None:
-        errmsg = f"Parameter smooth_window can not be None for WLS search."
-        raise ValueError(errmsg)
-
-    if search_mode != 'WLS' and smooth_window is not None:
-        smooth_window = None
-        LOGWARNING(f"{search_mode} templates requested, setting parameter smooth_window = None.")
-
-    if smooth_weights not in get_args(utils.SmoothWeights):
-        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
-        raise ValueError(errmsg)
-
+    # Get extreme values.
     min_period = np.amin(periods)
     max_period = np.amax(periods)
     max_duration = np.amax(duration_grid)
 
+    # Check the baseline.
     baseline = min_period - max_duration - exp_time
     if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
         LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
         search_mode: utils.SearchMode = 'TLS'
 
+    # Compute the duration of the signal, accounting for exp_time and smooth_window.
     if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
     else:

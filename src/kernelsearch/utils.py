@@ -124,9 +124,9 @@ def _verify_stellar_params(min_stellar_radius: float,
     return
 
 
-def _verify_ld_parameters(ld_type: LDType,
-                          ld_pars: ArrayLike
-                          ) -> np.ndarray:
+def _verify_ld_params(ld_type: LDType,
+                      ld_pars: ArrayLike
+                      ) -> np.ndarray:
     """ Check the input limb-darkening parameters ar valid.
     """
 

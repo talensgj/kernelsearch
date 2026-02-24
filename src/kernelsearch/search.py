@@ -736,7 +736,7 @@ def transit_search(time: np.ndarray,
     utils._verify_duration_grid_params(circular_orbits, frac_duration_step)
     utils._verify_period_group_sampling(period_group_sampling)
     utils._verify_normalisation(normalisation)
-    ld_pars = utils._verify_ld_parameters(ld_type, ld_pars)
+    ld_pars = utils._verify_ld_params(ld_type, ld_pars)
     smooth_window = utils._verify_lstsq_params(search_mode, smooth_window, smooth_weights, short_periods)
     num_processes = utils._verify_num_processes(num_processes)
 
