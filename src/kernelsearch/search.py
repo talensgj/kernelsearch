@@ -727,29 +727,18 @@ def transit_search(time: np.ndarray,
 
     """
 
-    if search_mode not in get_args(utils.SearchMode):
-        errmsg = f"Invalid value '{search_mode}' for parameter search_mode."
-        raise ValueError(errmsg)
-
-    if short_periods not in get_args(utils.ShortPeriods):
-        errmsg = f"Invalid value '{short_periods}' for parameter short_periods."
-        raise ValueError(errmsg)
-
-    if search_mode == 'WLS' and smooth_window is None:
-        errmsg = f"Parameter smooth_window can not be None for WLS search."
-        raise ValueError(errmsg)
-
-    if search_mode != 'WLS' and smooth_window is not None:
-        LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
-        smooth_window = None
-
-    if normalisation not in get_args(utils.Normalisation):
-        errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
-        raise ValueError(errmsg)
-
-    if smooth_weights not in get_args(utils.SmoothWeights):
-        errmsg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
-        raise ValueError(errmsg)
+    # Check the input parameters.
+    utils._verify_lightcurve(time, flux, flux_err)
+    utils._verify_observation_params(exp_time, exp_cadence)
+    utils._verify_stellar_params(min_stellar_radius, max_stellar_radius, min_stellar_mass, max_stellar_mass)
+    utils._verify_period_grid_params(min_transits, min_separation, period_sampling, min_period, max_period)
+    utils._verify_epoch_grid_params(epoch_sampling, min_epoch_step, max_epoch_step)
+    utils._verify_duration_grid_params(circular_orbits, frac_duration_step)
+    utils._verify_period_group_sampling(period_group_sampling)
+    utils._verify_normalisation(normalisation)
+    ld_pars = utils._verify_ld_parameters(ld_type, ld_pars)
+    smooth_window = utils._verify_lstsq_params(search_mode, smooth_window, smooth_weights, short_periods)
+    num_processes = utils._verify_num_processes(num_processes)
 
     # Pre-compute some arrays from the lightcurves.
     result = _prepare_lightcurve(time, flux, flux_err)

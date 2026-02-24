@@ -125,7 +125,8 @@ def _verify_stellar_params(min_stellar_radius: float,
 
 
 def _verify_ld_parameters(ld_type: LDType,
-                          ld_pars: ArrayLike):
+                          ld_pars: ArrayLike
+                          ) -> np.ndarray:
     """ Check the input limb-darkening parameters ar valid.
     """
 
@@ -230,21 +231,23 @@ def _verify_duration_grid_params(circular_orbits: bool,
     return
 
 
-def _verify_wls_params(search_mode,
-                       smooth_window,
-                       smooth_weights,
-                       short_periods):
+def _verify_lstsq_params(search_mode: SearchMode,
+                         smooth_window: Optional[float],
+                         smooth_weights: SmoothWeights,
+                         short_periods: ShortPeriods
+                         ) -> Optional[float]:
 
     if search_mode not in get_args(SearchMode):
         msg = f"Invalid value '{search_mode}' for parameter search_mode."
         raise ValueError(msg)
 
-    if search_mode != 'WLS':
+    if search_mode != 'WLS' and smooth_window is not None:
+        LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
         smooth_window = None
         return smooth_window
 
     if smooth_window is None:
-        msg = f"Parameter smooth_window must be set for 'WLS' search."
+        msg = f"Parameter smooth_window cannot be None for 'WLS' search."
         raise ValueError(msg)
 
     if not (smooth_window > 0):
@@ -284,7 +287,7 @@ def _verify_normalisation(normalisation: str):
     return
 
 
-def _verify_num_processes(num_processes: Optional[int]):
+def _verify_num_processes(num_processes: Optional[int]) -> Optional[int]:
     """ Check that the num_processes parameter is valid and reasonable.
     """
 
