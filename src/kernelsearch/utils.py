@@ -142,13 +142,13 @@ def _verify_ld_params(ld_type: LDType,
     num_pars = ld_pars.size
     if ld_type in ["uniform"] and num_pars == 0:
         pass
-    if ld_type in ["linear"] and num_pars == 1:
+    elif ld_type in ["linear"] and num_pars == 1:
         pass
-    if ld_type in ["quadratic", "square-root", "logarithmic", "exponential"] and ld_pars.size == 2:
+    elif ld_type in ["quadratic", "square-root", "logarithmic", "exponential"] and ld_pars.size == 2:
         pass
-    if ld_type in ["power2"] and num_pars == 3:
+    elif ld_type in ["power2"] and num_pars == 3:
         pass
-    if ld_type in ["nonlinear"] and num_pars == 4:
+    elif ld_type in ["nonlinear"] and num_pars == 4:
         pass
     else:
         msg = f"Invalid number of limb-darkening parameters {num_pars} for ld_type = '{ld_type}'."
