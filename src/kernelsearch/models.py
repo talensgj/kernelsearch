@@ -219,6 +219,35 @@ def get_sm_axis_kepler(stellar_density: Union[float, np.ndarray],
     return sm_axis
 
 
+def get_period_kepler(stellar_density: Union[float, np.ndarray],
+                      sm_axis: Union[float, np.ndarray]
+                      ) -> Union[float, np.ndarray]:
+    """ Compute the orbital period using Kepler's 3rd law.
+
+    Parameters
+    ----------
+    stellar_density: float
+        The density of the host star in g/cm^3.
+    sm_axis: float or np.ndarray
+        The semi-major axis in units of stellar radii.
+
+    Returns
+    -------
+    period: float or np.ndarray
+        The orbital period in days.
+
+    """
+
+    stellar_density *= 1e3  # kg/m^3
+
+    factor = stellar_density / sm_axis ** 3
+    period_s = np.sqrt(3 * np.pi / (utils.GRAVITY * factor))
+
+    period = period_s / utils.SEC_IN_DAY
+
+    return period
+
+
 def analytic_transit_model(time: np.ndarray,
                            transit_params: dict,
                            ld_type: utils.LDType,
