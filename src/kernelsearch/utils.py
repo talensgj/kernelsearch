@@ -157,6 +157,31 @@ def _verify_ld_parameters(ld_type: LDType,
     return ld_pars
 
 
+def _verify_min_transits(min_transits: int):
+    """ Check the min_transits parameter is valid.
+    """
+
+    if not (min_transits >= 1):
+        msg = f"Parameter min_transits must be >= 1."
+        raise ValueError(msg)
+
+    return
+
+
+def _verify_min_separation(min_separation: float):
+    """ Check the min_separation parameter is valid.
+    """
+
+    if not (min_separation >= 1):
+        msg = f"Parameter min_separation must be >= 1."
+        ValueError(msg)
+
+    if min_separation < MIN_SEPARATION:
+        LOGWARNING(f"Orbits with min_separation < {MIN_SEPARATION} are unlikely to be stable.")
+
+    return
+
+
 def _verify_period_grid_params(min_transits: int,
                                min_separation: float,
                                period_sampling: int,
@@ -166,16 +191,8 @@ def _verify_period_grid_params(min_transits: int,
     """ Check the period grid parameters are valid.
     """
 
-    if not (min_transits >= 1):
-        msg = f"Parameter min_transits must be >= 1."
-        raise ValueError(msg)
-
-    if min_separation < 1:
-        msg = f"Parameter min_separation must be > 1."
-        ValueError(msg)
-
-    if min_separation < MIN_SEPARATION:
-        LOGWARNING(f"Orbits with min_separation < {MIN_SEPARATION} are unlikely to be stable.")
+    _verify_min_transits(min_transits)
+    _verify_min_separation(min_separation)
 
     if not (1 <= period_sampling <= 9):
         msg = f"Parameter period_sampling must be in range [1, 9]."

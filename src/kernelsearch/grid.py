@@ -49,6 +49,8 @@ def get_epoch_step(min_duration: float,
 
     """
 
+    utils._verify_epoch_grid_params(epoch_sampling, min_epoch_step, max_epoch_step)
+
     epoch_step = min_duration / epoch_sampling
 
     epoch_step = np.maximum(epoch_step, min_epoch_step)
@@ -61,7 +63,9 @@ def get_epoch_step(min_duration: float,
 # PERIOD GRID #
 ###############
 
-def get_min_period(stellar_density: float, min_separation: float = 3.) -> float:
+def get_min_period(stellar_density: float,
+                   min_separation: float = 3.
+                   ) -> float:
     """ Compute the shortest period to be searched based on the planet-star
         separation on a circular orbit.
 
@@ -79,6 +83,8 @@ def get_min_period(stellar_density: float, min_separation: float = 3.) -> float:
         The shortest period at which the separation requirement is met in days.
 
     """
+
+    utils._verify_min_separation(min_separation)
 
     stellar_density *= 1e3  # kg/m^3
 
@@ -107,6 +113,8 @@ def get_max_period(baseline: float, min_transits: int = 3) -> float:
         could have been observed in days.
 
     """
+
+    utils._verify_min_transits(min_transits)
 
     max_period = baseline / min_transits
 
@@ -170,12 +178,7 @@ def get_period_grid(max_stellar_density: float,
 
     """
 
-    if min_separation < 1:
-        msg = f"Parameter min_separation should be > 1."
-        ValueError(msg)
-
-    if min_separation < utils.MIN_SEPARATION:
-        LOGWARNING(f"Orbits with min_separation < {utils.MIN_SEPARATION} are unlikely to be stable.")
+    utils._verify_period_grid_params(min_transits, min_separation, oversampling, min_period, max_period)
 
     if min_period is None:
         min_period = get_min_period(max_stellar_density, min_separation)
@@ -248,6 +251,8 @@ def get_stable_orbits(sm_axis: np.ndarray,
         most eccentric stable orbit.
 
     """
+
+    utils._verify_min_separation(min_separation)
 
     # Not all densities produce stable orbits at low periods.
     sm_axis_stable = np.maximum(sm_axis, min_separation)
@@ -418,6 +423,8 @@ def get_transit_duration_grid(min_duration: float,
         The duration grid to search.
 
     """
+
+    utils._verify_duration_grid_params(True, frac_duration_step)
 
     if max_duration < min_duration:
         msg = f"The maximum duration is less than the minimum duration, please fix your inputs."
