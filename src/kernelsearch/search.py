@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, get_args
+from typing import Optional
 from functools import partial
 from dataclasses import dataclass
 from collections import namedtuple
@@ -612,35 +612,35 @@ def _1d_periodogram(time: np.ndarray,
     return search_result
 
 
-def transit_search(time: np.ndarray,
-                   flux: np.ndarray,
-                   flux_err: np.ndarray,
-                   exp_time: float,
-                   exp_cadence: float,
-                   min_stellar_radius: float,
-                   max_stellar_radius: float,
-                   min_stellar_mass: float,
-                   max_stellar_mass: float,
-                   min_transits: int = 3,
-                   min_separation: float = 3.,
-                   period_sampling: int = 3,
-                   min_period: Optional[float] = None,
-                   max_period: Optional[float] = None,
-                   epoch_sampling: int = 20,
-                   min_epoch_step: float = 1 / utils.MIN_IN_DAY,
-                   max_epoch_step: float = 5 / utils.MIN_IN_DAY,
-                   circular_orbits: bool = True,
-                   frac_duration_step: float = 1.05,
-                   period_group_sampling: int = 3,
-                   normalisation: utils.Normalisation = 'umbra',
-                   ld_type: utils.LDType = 'linear',
-                   ld_pars: ArrayLike = (0.6,),
-                   search_mode: utils.SearchMode = 'TLS',
-                   short_periods: utils.ShortPeriods = 'skip',
-                   smooth_window: Optional[float] = None,
-                   smooth_weights: utils.SmoothWeights = 'uniform',
-                   num_processes: Optional[int] = None,
-                   ) -> tuple[SearchResult, SearchResult]:
+def _transit_search(time: np.ndarray,
+                    flux: np.ndarray,
+                    flux_err: np.ndarray,
+                    exp_time: float,
+                    exp_cadence: float,
+                    min_stellar_radius: float,
+                    max_stellar_radius: float,
+                    min_stellar_mass: float,
+                    max_stellar_mass: float,
+                    min_transits: int = 3,
+                    min_separation: float = 3.,
+                    period_sampling: int = 3,
+                    min_period: Optional[float] = None,
+                    max_period: Optional[float] = None,
+                    epoch_sampling: int = 20,
+                    min_epoch_step: float = 1 / utils.MIN_IN_DAY,
+                    max_epoch_step: float = 5 / utils.MIN_IN_DAY,
+                    circular_orbits: bool = True,
+                    frac_duration_step: float = 1.05,
+                    period_group_sampling: int = 3,
+                    normalisation: utils.Normalisation = 'umbra',
+                    ld_type: utils.LDType = 'linear',
+                    ld_pars: ArrayLike = (0.6,),
+                    search_mode: utils.SearchMode = 'TLS',
+                    short_periods: utils.ShortPeriods = 'skip',
+                    smooth_window: Optional[float] = None,
+                    smooth_weights: utils.SmoothWeights = 'uniform',
+                    num_processes: Optional[int] = None,
+                    ) -> tuple[SearchResult, SearchResult]:
     """ Perform a transit search on the provided data.
 
     Parameters
@@ -974,6 +974,186 @@ def transit_search(time: np.ndarray,
         diagnostics.plot_1d_periodogram(search_result_full, duration_circ, duration_full)
 
     return search_result_circ, search_result_full
+
+
+class TransitSearch:
+
+    def __init__(self,
+                 min_transits: int = 3,
+                 min_separation: float = 3.,
+                 period_sampling: int = 3,
+                 min_period: Optional[float] = None,
+                 max_period: Optional[float] = None,
+                 epoch_sampling: int = 20,
+                 min_epoch_step: float = 1 / utils.MIN_IN_DAY,
+                 max_epoch_step: float = 5 / utils.MIN_IN_DAY,
+                 circular_orbits: bool = True,
+                 frac_duration_step: float = 1.05,
+                 period_group_sampling: int = 3,
+                 normalisation: utils.Normalisation = 'umbra',
+                 num_processes: Optional[int] = None,
+                 ):
+        """ Initialise a transit search.
+        """
+
+        # Check the input parameters.
+        utils._verify_period_grid_params(min_transits, min_separation, period_sampling, min_period, max_period)
+        utils._verify_epoch_grid_params(epoch_sampling, min_epoch_step, max_epoch_step)
+        utils._verify_duration_grid_params(circular_orbits, frac_duration_step)
+        utils._verify_period_group_sampling(period_group_sampling)
+        utils._verify_normalisation(normalisation)
+        num_processes = utils._verify_num_processes(num_processes)
+
+        # Save the input parameters.
+        self.min_transits = min_transits
+        self.min_separation = min_separation
+        self.period_sampling = period_sampling
+        self.min_period = min_period
+        self.max_period = max_period
+        self.epoch_sampling = epoch_sampling
+        self.min_epoch_step = min_epoch_step
+        self.max_epoch_step = max_epoch_step
+        self.circular_orbits = circular_orbits
+        self.frac_duration_step = frac_duration_step
+        self.period_group_sampling = period_group_sampling
+        self.normalisation = normalisation
+        self.num_processes = num_processes
+
+        return
+
+    def boxy_lstsq(self,
+                   time: np.ndarray,
+                   flux: np.ndarray,
+                   flux_err: np.ndarray,
+                   exp_time: float,
+                   exp_cadence: float,
+                   min_stellar_radius: float,
+                   max_stellar_radius: float,
+                   min_stellar_mass: float,
+                   max_stellar_mass: float
+                   ):
+        """ Perform a BLS-type transit search.
+        """
+
+        result = _transit_search(time,
+                                 flux,
+                                 flux_err,
+                                 exp_time,
+                                 exp_cadence,
+                                 min_stellar_radius,
+                                 max_stellar_radius,
+                                 min_stellar_mass,
+                                 max_stellar_mass,
+                                 min_transits=self.min_transits,
+                                 min_separation=self.min_separation,
+                                 period_sampling=self.period_sampling,
+                                 min_period=self.min_period,
+                                 max_period=self.max_period,
+                                 epoch_sampling=self.epoch_sampling,
+                                 min_epoch_step=self.min_epoch_step,
+                                 max_epoch_step=self.max_epoch_step,
+                                 circular_orbits=self.circular_orbits,
+                                 frac_duration_step=self.frac_duration_step,
+                                 period_group_sampling=self.period_group_sampling,
+                                 normalisation=self.normalisation,
+                                 search_mode="BLS",
+                                 num_processes=self.num_processes)
+
+        return result
+
+    def transit_lstsq(self,
+                      time: np.ndarray,
+                      flux: np.ndarray,
+                      flux_err: np.ndarray,
+                      exp_time: float,
+                      exp_cadence: float,
+                      min_stellar_radius: float,
+                      max_stellar_radius: float,
+                      min_stellar_mass: float,
+                      max_stellar_mass: float,
+                      ld_type: utils.LDType,
+                      ld_pars: ArrayLike,
+                      ):
+        """ Perform a TLS-type transit search.
+        """
+
+        result = _transit_search(time,
+                                 flux,
+                                 flux_err,
+                                 exp_time,
+                                 exp_cadence,
+                                 min_stellar_radius,
+                                 max_stellar_radius,
+                                 min_stellar_mass,
+                                 max_stellar_mass,
+                                 min_transits=self.min_transits,
+                                 min_separation=self.min_separation,
+                                 period_sampling=self.period_sampling,
+                                 min_period=self.min_period,
+                                 max_period=self.max_period,
+                                 epoch_sampling=self.epoch_sampling,
+                                 min_epoch_step=self.min_epoch_step,
+                                 max_epoch_step=self.max_epoch_step,
+                                 circular_orbits=self.circular_orbits,
+                                 frac_duration_step=self.frac_duration_step,
+                                 period_group_sampling=self.period_group_sampling,
+                                 normalisation=self.normalisation,
+                                 ld_type=ld_type,
+                                 ld_pars=ld_pars,
+                                 search_mode="TLS",
+                                 num_processes=self.num_processes)
+
+        return result
+
+    def warped_lstsq(self,
+                     time: np.ndarray,
+                     flux: np.ndarray,
+                     flux_err: np.ndarray,
+                     exp_time: float,
+                     exp_cadence: float,
+                     min_stellar_radius: float,
+                     max_stellar_radius: float,
+                     min_stellar_mass: float,
+                     max_stellar_mass: float,
+                     ld_type: utils.LDType,
+                     ld_pars: ArrayLike,
+                     smooth_window: float,
+                     smooth_weights: utils.SmoothWeights = 'uniform',
+                     short_periods: utils.ShortPeriods = 'skip',
+                     ):
+        """ Perform a WLS-type transit search.
+        """
+
+        result = _transit_search(time,
+                                 flux,
+                                 flux_err,
+                                 exp_time,
+                                 exp_cadence,
+                                 min_stellar_radius,
+                                 max_stellar_radius,
+                                 min_stellar_mass,
+                                 max_stellar_mass,
+                                 min_transits=self.min_transits,
+                                 min_separation=self.min_separation,
+                                 period_sampling=self.period_sampling,
+                                 min_period=self.min_period,
+                                 max_period=self.max_period,
+                                 epoch_sampling=self.epoch_sampling,
+                                 min_epoch_step=self.min_epoch_step,
+                                 max_epoch_step=self.max_epoch_step,
+                                 circular_orbits=self.circular_orbits,
+                                 frac_duration_step=self.frac_duration_step,
+                                 period_group_sampling=self.period_group_sampling,
+                                 normalisation=self.normalisation,
+                                 ld_type=ld_type,
+                                 ld_pars=ld_pars,
+                                 search_mode="WLS",
+                                 short_periods=short_periods,
+                                 smooth_window=smooth_window,
+                                 smooth_weights=smooth_weights,
+                                 num_processes=self.num_processes)
+
+        return result
 
 
 def main():
