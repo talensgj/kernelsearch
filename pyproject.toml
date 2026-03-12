@@ -3,7 +3,7 @@ requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kernelsearch"
+name = "umbra"
 version = "0.7.0"
 authors = [
     { name = "Geert Jan Talens", email = "phys2523@ox.ac.uk" },

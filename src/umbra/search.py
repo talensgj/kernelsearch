@@ -842,15 +842,15 @@ def _transit_search(time: np.ndarray,
         baseline = np.amin(period_group) - np.amax(duration_group) - exp_time
         if search_mode == 'WLS' and baseline < smooth_window:
             if short_periods == 'skip':
-                LOGINFO("  Skipping short periods in WLS search.")
+                LOGDEBUG("  Skipping short periods in WLS search.")
                 continue
             if short_periods == 'TLS':
                 search_mode_: utils.SearchMode = 'TLS'
-                LOGINFO("  Using TLS templates for short periods in WLS search.")
+                LOGDEBUG("  Using TLS templates for short periods in WLS search.")
             if short_periods == 'WLS':
                 search_mode_: utils.SearchMode = 'TLS'
                 is_short_period = True
-                LOGINFO("  Using WLS templates for short periods in WLS search.")
+                LOGDEBUG("  Using WLS templates for short periods in WLS search.")
 
         group.search_mode = search_mode_
 
