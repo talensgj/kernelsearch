@@ -664,7 +664,7 @@ def _prepare_lightcurve(flux: np.ndarray,
     return weights_norm, delta_flux_weighted, weights_sum, flux_mean, chisq0
 
 
-def template_lstsq(time: np.ndarray,
+def transit_search(time: np.ndarray,
                    flux: np.ndarray,
                    flux_err: np.ndarray,
                    periods: np.ndarray,
