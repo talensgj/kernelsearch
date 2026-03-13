@@ -837,7 +837,7 @@ def template_lstsq(time: np.ndarray,
         dchisq_dec[imin:imax] = result[1]
         dchisq_inc[imin:imax] = result[2]
 
-        ipeak = np.argmax(power)
+        ipeak = np.argmax(power[:imax])
         if ipeak >= imin:
             best_period = periods[ipeak]
             best_midpoint = result[3][ipeak - imin]
