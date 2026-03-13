@@ -707,7 +707,7 @@ def transit_search(time: np.ndarray,
         print(f'Warning: performing {search_mode} search, setting smooth_window to None.')
         smooth_window = None
 
-    if normalisation not in ['normal', 'dec_minus_inc']:
+    if normalisation not in ['normal', 'umbra']:
         errmsg = f"Invalid value '{normalisation}' for parameter normalisation."
         raise ValueError(errmsg)
 
