@@ -12,6 +12,7 @@ from transitleastsquares import grid, tls_constants
 import matplotlib.pyplot as plt
 
 SECINDAY = 24*3600
+IN_TRANSIT_FLOOR = 5
 
 
 def evaluate_template(time,
@@ -488,8 +489,7 @@ def _search_period(period,
         depth = alpha / (beta - gamma ** 2)
 
     # Handle epoch/duration combinations with few or no in-transit points.
-    # All elements of min_points must be >=1.
-    min_points = np.maximum(min_points, 1)
+    min_points = np.maximum(min_points, IN_TRANSIT_FLOOR)
 
     if np.isscalar(min_points):
         mask = npoints < min_points
