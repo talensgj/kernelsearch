@@ -110,7 +110,7 @@ def _duration_grid(min_duration: float,
                    max_duration: float,
                    ref_period: float,
                    ref_depth: float = 0.005,
-                   oversampling: float = 4):
+                   oversampling: float = 3):
 
     duration = min_duration
     duration_grid = [min_duration]
@@ -148,7 +148,7 @@ def get_duration_grid(periods: np.ndarray,
                       min_bin_size: float = 1/(24*60),  # TODO are these good values?
                       max_bin_size: float = 5/(24*60),  # TODO are these good values?
                       oversampling_epoch: int = 3,
-                      oversampling_duration: float = 4):
+                      oversampling_duration: float = 3):
 
     ref_period = np.amax(periods)
     min_duration, max_duration = get_duration_lims(periods, R_star_min, R_star_max, M_star_min, M_star_max)
@@ -678,14 +678,14 @@ def transit_search(time: np.ndarray,
                    ld_pars: tuple = (0.6,),
                    search_mode: str = 'TLS',
                    short_periods: str = 'skip',
-                   normalisation: str = 'normal',
+                   normalisation: str = 'umbra',
                    smooth_window: Optional[float] = None,
                    smooth_weights: str = 'uniform',
                    min_bin_size: float = 1 / (24 * 60),
                    max_bin_size: float = 5 / (24 * 60),
                    oversampling_epoch: int = 3,
-                   oversampling_duration: float = 4,
-                   max_duty_cycle: float = 0.2,
+                   oversampling_duration: float = 3,
+                   max_duty_cycle: float = 0.15,
                    num_processes: Optional[int] = None
                    ) -> SearchResult:
     """ Perform a transit search with templates.
