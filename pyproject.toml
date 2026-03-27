@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "umbra"
-version = "0.7.1"
+version = "1.0.0"
 authors = [
     { name = "Geert Jan Talens", email = "phys2523@ox.ac.uk" },
     ]
