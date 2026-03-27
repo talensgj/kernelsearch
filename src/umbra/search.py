@@ -287,8 +287,7 @@ def _search_period(period: np.ndarray,
         depth = alpha / (beta - gamma ** 2)
 
     # Handle epoch/duration combinations with few or no in-transit points.
-    # All elements of min_points must be >=1.
-    min_points = np.maximum(min_points, 1)
+    min_points = np.maximum(min_points, utils.IN_TRANSIT_FLOOR)
 
     if np.isscalar(min_points):
         mask = num_points < min_points

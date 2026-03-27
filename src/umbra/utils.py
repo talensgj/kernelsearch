@@ -36,6 +36,7 @@ SOLAR_DENSITY = (constants.M_sun / (4/3 * np.pi * constants.R_sun ** 3)).to('g/c
 # Sanity check values.
 MIN_SEPARATION = 1.20
 MAX_DUTY_CYCLE = 0.30
+IN_TRANSIT_FLOOR = 5
 MIN_STELLAR_MASS = 0.01
 MAX_STELLAR_MASS = 100.
 MIN_STELLAR_RADIUS = 0.001
