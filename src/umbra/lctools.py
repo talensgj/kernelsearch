@@ -290,6 +290,7 @@ def filter_ysd_lowess(time: np.ndarray,
                       flux_err: np.ndarray,
                       window_length: float,
                       cadence: float,
+                      break_tolerance: float = 0.5,
                       window_smooth: Optional[float] = None,
                       gap_size: float = 0.2,
                       min_width: float = 7.5 / 24,
@@ -311,6 +312,9 @@ def filter_ysd_lowess(time: np.ndarray,
         The size of the smoothing window used with wotan, same units as time.
     cadence: float
         Cadence of the observations, same units as time.
+    break_tolerance: float
+        The break tolerance to use when splitting the lighcurve into sections
+        initially.
     window_smooth: float or None
         The window size to use for smoothing the lightcurve prior to peak/through detection.
         If not given taken to be the same as window_length.
@@ -346,8 +350,7 @@ def filter_ysd_lowess(time: np.ndarray,
     max_width = np.ceil(max_width / cadence)
 
     # Get the indexes of the gaps.
-    wotan_kwargs = get_wotan_kwargs('ysd-lowess')
-    gaps_indexes = wotan.gaps.get_gaps_indexes(time, break_tolerance=wotan_kwargs['break_tolerance'])
+    gaps_indexes = wotan.gaps.get_gaps_indexes(time, break_tolerance)
 
     # Iterate over all segments.
     mask = np.ones_like(flux, dtype='bool')
