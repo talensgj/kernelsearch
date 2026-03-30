@@ -79,13 +79,30 @@ def bin_lightcurve(time: np.ndarray,
     return bin_time, bin_flux, bin_flux_err, num_points
 
 
-def get_wotan_kwargs(method: str) -> dict:
+def get_wotan_kwargs(method: str, wotan_kwargs: Optional[dict] = None) -> dict:
 
-    wotan_kwargs = dict()
-    wotan_kwargs['edge_cutoff'] = 0.  # Don't discard data.
-    wotan_kwargs['break_tolerance'] = 0.5  # Treat quarters individually.
+    if wotan_kwargs is None:
+        wotan_kwargs = dict()
 
-    if method == 'biweight':
+    if 'method' in wotan_kwargs:
+        msg = f"Can't pass 'method' through wotan_kwargs, use method parameter instead."
+        raise ValueError(msg)
+
+    if 'window_length' in wotan_kwargs:
+        msg = f"Can't pass 'window_length' through wotan_kwargs, use window_length parameter instead."
+        raise ValueError(msg)
+
+    if 'return_trend' in wotan_kwargs:
+        msg = f"Can't pass 'return_trend' through wotan_kwargs."
+        raise ValueError(msg)
+
+    if 'edge_cutoff' not in wotan_kwargs:
+        wotan_kwargs['edge_cutoff'] = 0.  # Don't discard data.
+
+    if 'break_tolerance' not in wotan_kwargs:
+        wotan_kwargs['break_tolerance'] = 0.5  # Treat quarters individually.
+
+    if method == 'biweight' and 'cval' not in wotan_kwargs:
         wotan_kwargs['cval'] = 5
 
     return wotan_kwargs
@@ -95,7 +112,8 @@ def filter_wotan(time: np.ndarray,
                  flux: np.ndarray,
                  flux_err: np.ndarray,
                  method: str,
-                 window_length: float
+                 window_length: float,
+                 wotan_kwargs: Optional[dict] = None
                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """ Filter a lightcurve using wotan.
 
@@ -111,6 +129,9 @@ def filter_wotan(time: np.ndarray,
         The filtering method to use.
     window_length: float
         The size of the smoothing window used with wotan, must have the same units as time.
+    wotan_kwargs: dict or None
+        Additional arguments to pass to wotan.flatten, except method,
+        window_length and return_trend.
 
     Returns
     -------
@@ -125,7 +146,7 @@ def filter_wotan(time: np.ndarray,
 
     """
 
-    wotan_kwargs = get_wotan_kwargs(method)
+    wotan_kwargs = get_wotan_kwargs(method, wotan_kwargs)
 
     # Run the detrending.
     flux_detrend, trend = wotan.flatten(time,
