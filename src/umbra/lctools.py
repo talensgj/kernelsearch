@@ -72,7 +72,7 @@ def bin_lightcurve(time: np.ndarray,
     weights_flux_sum = weights_flux_sum[mask]
 
     # Compute the binned lightcurve.
-    bin_time = time_sum/min_points
+    bin_time = time_sum/num_points
     bin_flux = weights_flux_sum/weights_sum
     bin_flux_err = np.sqrt(1/weights_sum)
 
