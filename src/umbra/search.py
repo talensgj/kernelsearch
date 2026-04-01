@@ -889,9 +889,9 @@ def _transit_search(time: np.ndarray,
         kwargs['ld_pars'] = ld_pars
 
         if num_processes is None:
-            result = _search_periods(period_group, duration_lims_full, duration_lims_circ, **kwargs)
+            result = _search_periods(period_group, duration_lims_circ, duration_lims_full, **kwargs)
         else:
-            result = _search_periods_with_pool(num_processes, period_group, duration_lims_full, duration_lims_circ, **kwargs)
+            result = _search_periods_with_pool(num_processes, period_group, duration_lims_circ, duration_lims_full, **kwargs)
 
         power[imin:imax, jmin:jmax] = result[0]
         dchisq_dec[imin:imax, jmin:jmax] = result[1]
