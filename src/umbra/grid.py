@@ -317,6 +317,8 @@ def get_transit_duration_limits(period_grid: np.ndarray,
                                 impact_param_bounds: tuple[float, float] = (0.0, 0.9),
                                 min_separation: float = 3.,
                                 circular_orbits: bool = False,
+                                max_eccentricity: Optional[float] = None,
+                                frac_eccentricity: Optional[float] = None
                                 ) -> tuple[DurationLimits, StableOrbit, StableOrbit]:
     """ Compute the minimum and maximum transit duration as a function of the
         orbital period, given possible bounds on the stellar density and
@@ -392,6 +394,14 @@ def get_transit_duration_limits(period_grid: np.ndarray,
         outer_orbit = outer_orbit._replace(ecc=np.zeros_like(period_grid))
         inner_orbit = inner_orbit._replace(ecc=np.zeros_like(period_grid))
 
+    if max_eccentricity is not None:
+        outer_orbit = outer_orbit._replace(ecc=np.minimum(outer_orbit.ecc, max_eccentricity))
+        inner_orbit = inner_orbit._replace(ecc=np.minimum(inner_orbit.ecc, max_eccentricity))
+
+    if frac_eccentricity is not None:
+        outer_orbit = outer_orbit._replace(ecc=frac_eccentricity * outer_orbit.ecc)
+        inner_orbit = inner_orbit._replace(ecc=frac_eccentricity * inner_orbit.ecc)
+
     # Compute the duration limits for the given parameter bounds.
     duration_short = models.get_transit_duration(period_grid, outer_orbit.sm_axis, min_radius_ratio, max_impact_param, outer_orbit.ecc, 90.)
     duration_long = models.get_transit_duration(period_grid, inner_orbit.sm_axis, max_radius_ratio, min_impact_param, inner_orbit.ecc, 270.)
@@ -424,7 +434,7 @@ def get_transit_duration_grid(min_duration: float,
 
     """
 
-    utils._verify_duration_grid_params(True, frac_duration_step)
+    utils._verify_duration_grid_params(True, frac_duration_step, None, None)
 
     if max_duration < min_duration:
         msg = f"The maximum duration is less than the minimum duration, please fix your inputs."
