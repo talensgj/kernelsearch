@@ -341,7 +341,7 @@ def _verify_output_file(output_file: Optional[str]):
         msg = f"Output file should be an .asdf file."
         raise ValueError(msg)
 
-    if not os.path.exists(path):
+    if path != '' and not os.path.exists(path):
         msg = f"Path to {output_file} does not exist."
         raise ValueError(msg)
 
