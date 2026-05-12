@@ -1144,6 +1144,8 @@ class TransitSearch:
         """ Perform a BLS-type transit search.
         """
 
+        utils._verify_output_file(output_file)
+
         search_result = _transit_search(
             time,
             flux,
@@ -1201,6 +1203,8 @@ class TransitSearch:
                       ):
         """ Perform a TLS-type transit search.
         """
+
+        utils._verify_output_file(output_file)
 
         search_result = _transit_search(
             time,
@@ -1266,6 +1270,8 @@ class TransitSearch:
                      ):
         """ Perform a WLS-type transit search.
         """
+
+        utils._verify_output_file(output_file)
 
         search_result = _transit_search(
             time,
