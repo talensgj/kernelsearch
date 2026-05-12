@@ -1,6 +1,6 @@
 import numpy as np
 
-from . import grid
+from . import grid, models
 
 import matplotlib.pyplot as plt
 
@@ -98,54 +98,82 @@ def plot_power_at_period(phase_grid, duration_grid, power, depth, num_points, mi
     return
 
 
-def plot_1d_periodogram(periodogram,
-                        duration_circ,
-                        duration_full):
+def plot_lightcurve(time,
+                    flux,
+                    transit_model,
+                    smooth_window=None):
+    """ Make a diagnostic plot of the phase-folded lightcurve.
+    """
+
+    if smooth_window is None:
+        smooth_window = 0
+
+    parameters = transit_model['parameters']
+    phase = models.phase_fold(time, parameters['period'], parameters['midpoint'])
+
+    plt.figure(figsize=(12, 3))
+
+    plt.subplot(111)
+
+    plt.plot(phase, 1e6 * (flux - 1), '.', markersize=5, markeredgecolor='None', alpha=0.5, color='gray')
+    plt.stairs(1e6 * (transit_model['flux'] - 1), transit_model['phase_edges'], baseline=None, lw=2, color='k', zorder=10)
+
+    dx = 2*parameters['duration']/parameters['period'] + smooth_window/2
+    plt.xlim(-dx, dx)
+
+    plt.xlabel('Phase')
+    plt.ylabel(r'$\Delta$Flux [ppm]')
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    return
+
+
+def plot_1d_periodogram(periodogram):
 
     plt.figure(figsize=(12, 15))
 
     ax = plt.subplot(611, xscale='log')
 
-    plt.plot(periodogram.periods, periodogram.power)
+    plt.plot(periodogram['periods'], periodogram['power'])
 
     plt.ylabel('Power')
 
     plt.subplot(612, sharex=ax)
 
-    plt.plot(periodogram.periods, periodogram.dchisq_dec, label=r'$\Delta\chi^2_{-}$')
-    plt.plot(periodogram.periods, periodogram.dchisq_inc, label=r'$\Delta\chi^2_{+}$')
+    plt.plot(periodogram['periods'], periodogram['dchisq_dec'], label=r'$\Delta\chi^2_{-}$')
+    plt.plot(periodogram['periods'], periodogram['dchisq_inc'], label=r'$\Delta\chi^2_{+}$')
 
     plt.legend()
     plt.ylabel(r'$\Delta\chi^2$')
 
     plt.subplot(613, sharex=ax)
-    plt.plot(periodogram.periods, np.mod(periodogram.midpoint/periodogram.periods, 1))
+    plt.plot(periodogram['periods'], np.mod(periodogram['midpoint']/periodogram['periods'], 1))
 
     plt.ylabel('Phase')
 
     plt.subplot(614, yscale='log', sharex=ax)
 
-    plt.plot(periodogram.periods, periodogram.duration)
+    plt.plot(periodogram['periods'], periodogram['duration'])
 
-    plt.plot(periodogram.periods, duration_full.short, c='k')
-    plt.plot(periodogram.periods, duration_full.long, c='k')
-
-    plt.plot(periodogram.periods, duration_circ.short, c='k', ls='--')
-    plt.plot(periodogram.periods, duration_circ.long, c='k', ls='--')
+    plt.plot(periodogram['periods'], periodogram['duration_short'], c='k')
+    plt.plot(periodogram['periods'], periodogram['duration_long'], c='k')
 
     plt.ylabel('Duration [days]')
 
     plt.subplot(615, sharex=ax)
 
-    plt.plot(periodogram.periods, 1e6 * periodogram.depth)
+    plt.plot(periodogram['periods'], 1e6 * periodogram['depth'])
 
     plt.ylabel('Depth [ppm]')
 
     plt.subplot(616, sharex=ax)
 
-    plt.plot(periodogram.periods, 1e6 * (periodogram.flux_level - 1))
+    plt.plot(periodogram['periods'], 1e6 * (periodogram['flux_level'] - 1))
 
-    plt.xlim(periodogram.periods[0], periodogram.periods[-1])
+    plt.xlim(periodogram['periods'][0], periodogram['periods'][-1])
 
     plt.ylabel('Flux Level - 1 [ppm]')
 

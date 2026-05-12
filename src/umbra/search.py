@@ -2,7 +2,6 @@ import logging
 from typing import Optional
 from functools import partial
 from dataclasses import dataclass
-from collections import namedtuple
 from timeit import default_timer as timer
 from importlib.metadata import version
 
@@ -459,31 +458,6 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
-# TODO Rethink this way of collecting the result.
-SearchResult = namedtuple('lstsq_result',
-                          ['periods',
-                           'period_groups',
-                           'durations',
-                           'duration_lims',
-                           'duration_groups',
-                           'power',
-                           'chisq0',
-                           'dchisq_dec',
-                           'dchisq_inc',
-                           'midpoint',
-                           'duration',
-                           'depth',
-                           'flux_level',
-                           'status_flag',
-                           'best_period',
-                           'best_midpoint',
-                           'best_duration',
-                           'best_depth',
-                           'best_flux_level',
-                           'model_phase',
-                           'model_flux'])
-
-
 def _prepare_lightcurve(time: np.ndarray,
                         flux: np.ndarray,
                         flux_err: np.ndarray
@@ -514,7 +488,7 @@ def _prepare_lightcurve(time: np.ndarray,
     return delta_time, delta_flux_weighted, weights_norm, tstart, flux_mean, weights_sum, chisq0
 
 
-def _1d_periodogram(time: np.ndarray,
+def _1d_periodogram(runtime: float,
                     period_grid: np.ndarray,
                     duration_grid: np.ndarray,
                     period_groups: list[PeriodGroup],
@@ -528,7 +502,7 @@ def _1d_periodogram(time: np.ndarray,
                     best_template_vals: tuple,
                     duration_lims: grid.DurationLimits,
                     duration_circ: Optional[grid.DurationLimits] = None
-                    ) -> SearchResult:
+                    ) -> tuple[dict, dict]:
     """ Collapse the 2D periodgram according the the given duration limits.
     """
 
@@ -580,38 +554,56 @@ def _1d_periodogram(time: np.ndarray,
     best_flux_level = flux_level_vals[ipeak]
 
     _, template_edges, template_model = best_template_vals
-    model_phase, model_flux = models.evaluate_lstsq_template(time,
-                                                             best_period,
-                                                             best_midpoint,
-                                                             best_depth,
-                                                             best_flux_level,
-                                                             template_edges,
-                                                             template_model)
+    phase_edges, model_flux = models.plot_lstsq_template(best_period,
+                                                         best_depth,
+                                                         best_flux_level,
+                                                         template_edges,
+                                                         template_model)
 
-    # Save the final periodogram.
-    search_result = SearchResult(periods=period_grid,
-                                 period_groups=[group.period_idx for group in period_groups],
-                                 durations=duration_grid,
-                                 duration_lims=duration_lims,
-                                 duration_groups=[group.duration_idx for group in period_groups],
-                                 power=power,
-                                 chisq0=chisq0,
-                                 dchisq_dec=dchisq_dec,
-                                 dchisq_inc=dchisq_inc,
-                                 midpoint=midpoint_vals,
-                                 duration=duration_vals,
-                                 depth=depth_vals,
-                                 flux_level=flux_level_vals,
-                                 status_flag=status_flag,
-                                 best_period=best_period,
-                                 best_midpoint=best_midpoint,
-                                 best_duration=best_duration,
-                                 best_depth=best_depth,
-                                 best_flux_level=best_flux_level,
-                                 model_phase=model_phase,
-                                 model_flux=model_flux)
+    # Save the periodogram header.
+    header = dict()
+    header['runtime'] = runtime
+    header['chisq0'] = chisq0
+    header['periods'] = period_grid
+    header['durations'] = duration_grid
+    header['period_groups'] = [group.period_idx for group in period_groups]
+    header['duration_groups'] = [group.duration_idx for group in period_groups]
+    header['template_groups'] = [group.search_mode for group in period_groups]
 
-    return search_result
+    # Save the periodogram.
+    periodogram = dict()
+    periodogram['periods'] = period_grid
+    periodogram['power'] = power
+    periodogram['dchisq_dec'] = dchisq_dec
+    periodogram['dchisq_inc'] = dchisq_inc
+    periodogram['midpoint'] = midpoint_vals
+    periodogram['duration'] = duration_vals
+    periodogram['depth'] = depth_vals
+    periodogram['flux_level'] = flux_level_vals
+    periodogram['duration_short'] = duration_lims.short
+    periodogram['duration_long'] = duration_lims.long
+    if duration_circ is not None:
+        periodogram['status_flag'] = status_flag
+
+    # Save the best-fit model.
+    parameters = dict()
+    parameters['period'] = best_period
+    parameters['midpoint'] = best_midpoint
+    parameters['duration'] = best_duration
+    parameters['depth'] = best_depth
+    parameters['flux_level'] = best_flux_level
+
+    transit_model = dict()
+    transit_model['phase_edges'] = phase_edges
+    transit_model['flux'] = model_flux
+    transit_model['parameters'] = parameters
+
+    # Create the search_result.
+    search_result = dict()
+    search_result['periodogram'] = periodogram
+    search_result['transit_model'] = transit_model
+
+    return header, search_result
 
 
 def _transit_search(time: np.ndarray,
@@ -642,7 +634,7 @@ def _transit_search(time: np.ndarray,
                     smooth_window: Optional[float] = None,
                     smooth_weights: utils.SmoothWeights = 'uniform',
                     num_processes: Optional[int] = None,
-                    ) -> tuple[SearchResult, SearchResult]:
+                    ) -> tuple[dict, dict, dict]:
     """ Perform a transit search on the provided data.
 
     Parameters
@@ -721,11 +713,14 @@ def _transit_search(time: np.ndarray,
 
     Returns
     -------
-    search_result_circ: SearchResult
-        The periodogram for a search of the circular durations only.
-    search_result_full: SearchResult or None
-        The periodogram for a search of the full (eccentric) duration range,
-        provided only if circular_orbits = False.
+    header: dict
+        The header of the periodogram search.
+    search_result_circ: dict
+        The periodogram and best-fit model for a search of the circular
+        durations only.
+    search_result_full: dict or None
+        The periodogram and best-fit model for a search of the full (eccentric)
+        duration range, provided only if circular_orbits = False.
 
     """
 
@@ -822,7 +817,7 @@ def _transit_search(time: np.ndarray,
     best_edges_full = None
     best_model_full = None
 
-    tottime = 0
+    runtime = 0
     ngroups = len(period_groups)
     for idx, group in enumerate(period_groups):
         start_time = timer()
@@ -916,11 +911,11 @@ def _transit_search(time: np.ndarray,
             best_edges_full = edges_full
             best_model_full = model_full
 
-        runtime = timer() - start_time
-        tottime += runtime
-        LOGDEBUG(f"  Period group searched in {runtime:.1f} seconds.")
+        runtime_ = timer() - start_time
+        runtime += runtime_
+        LOGDEBUG(f"  Period group searched in {runtime_:.1f} seconds.")
 
-    LOGINFO(f"Full search completed in {tottime:.1f} seconds.")
+    LOGINFO(f"Full search completed in {runtime:.1f} seconds.")
 
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
@@ -937,45 +932,49 @@ def _transit_search(time: np.ndarray,
         diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
 
     # Generate the final periodogram for circular orbits.
-    search_result_circ = _1d_periodogram(time,
-                                         period_grid,
-                                         duration_grid,
-                                         period_groups,
-                                         power,
-                                         chisq0,
-                                         dchisq_dec,
-                                         dchisq_inc,
-                                         midpoint_vals,
-                                         depth_vals,
-                                         flux_level_vals,
-                                         best_vals_circ,
-                                         duration_lims=duration_circ)
+    search_header, search_result_circ = _1d_periodogram(
+        runtime,
+        period_grid,
+        duration_grid,
+        period_groups,
+        power,
+        chisq0,
+        dchisq_dec,
+        dchisq_inc,
+        midpoint_vals,
+        depth_vals,
+        flux_level_vals,
+        best_vals_circ,
+        duration_lims=duration_circ)
 
     if utils.DEBUG:
-        diagnostics.plot_1d_periodogram(search_result_circ, duration_circ, duration_full)
+        diagnostics.plot_lightcurve(time, flux, search_result_circ['transit_model'], smooth_window)
+        diagnostics.plot_1d_periodogram(search_result_circ['periodogram'])
 
     # Generate the final peridogram for the full duration range.
     search_result_full = None
     if not circular_orbits:
-        search_result_full = _1d_periodogram(time,
-                                             period_grid,
-                                             duration_grid,
-                                             period_groups,
-                                             power,
-                                             chisq0,
-                                             dchisq_dec,
-                                             dchisq_inc,
-                                             midpoint_vals,
-                                             depth_vals,
-                                             flux_level_vals,
-                                             best_vals_full,
-                                             duration_lims=duration_full,
-                                             duration_circ=duration_circ)
+        search_header, search_result_full = _1d_periodogram(
+            runtime,
+            period_grid,
+            duration_grid,
+            period_groups,
+            power,
+            chisq0,
+            dchisq_dec,
+            dchisq_inc,
+            midpoint_vals,
+            depth_vals,
+            flux_level_vals,
+            best_vals_full,
+            duration_lims=duration_full,
+            duration_circ=duration_circ)
 
     if utils.DEBUG and search_result_full is not None:
-        diagnostics.plot_1d_periodogram(search_result_full, duration_circ, duration_full)
+        diagnostics.plot_lightcurve(time, flux, search_result_full['transit_model'], smooth_window)
+        diagnostics.plot_1d_periodogram(search_result_full['periodogram'])
 
-    return search_result_circ, search_result_full
+    return search_header, search_result_circ, search_result_full
 
 
 class TransitSearch:
@@ -1023,12 +1022,12 @@ class TransitSearch:
 
         return
 
-    def _save_search_result(self,
-                            output_file: str,
+    def _full_search_result(self,
                             target_config: dict,
-                            search_result: tuple[SearchResult, Optional[SearchResult]]):
-
-        search_result_circ, search_result_full = search_result
+                            search_header: dict,
+                            search_result_circ: dict,
+                            search_result_full: Optional[dict],
+                            output_file: Optional[str]):
 
         # Build the global configuration section.
         global_config = dict()
@@ -1047,87 +1046,22 @@ class TransitSearch:
         global_config['normalisation'] = self.normalisation
         global_config['num_processes'] = self.num_processes
 
-        # Build the search result header.
-        header = dict()
-        header['chisq0'] = search_result_circ.chisq0
-        header['periods'] = search_result_circ.periods
-        header['durations'] = search_result_circ.durations
-        header['period_groups'] = search_result_circ.period_groups
-        header['duration_groups'] = search_result_circ.duration_groups
-
-        # Build the circular peridogram output.
-        periodogram_circ = dict()
-        periodogram_circ['power'] = search_result_circ.power
-        periodogram_circ['dchisq_dec'] = search_result_circ.dchisq_dec
-        periodogram_circ['dchisq_inc'] = search_result_circ.dchisq_inc
-        periodogram_circ['midpoint'] = search_result_circ.midpoint
-        periodogram_circ['duration'] = search_result_circ.duration
-        periodogram_circ['depth'] = search_result_circ.depth
-        periodogram_circ['flux_level'] = search_result_circ.flux_level
-        periodogram_circ['short_duration'] = search_result_circ.duration_lims.short
-        periodogram_circ['long_duration'] = search_result_circ.duration_lims.long
-
-        parameters_circ = dict()
-        parameters_circ['period'] = search_result_circ.best_period
-        parameters_circ['midpoint'] = search_result_circ.best_midpoint
-        parameters_circ['duration'] = search_result_circ.best_duration
-        parameters_circ['depth'] = search_result_circ.best_depth
-        parameters_circ['flux_level'] = search_result_circ.best_flux_level
-
-        # TODO not too sure about saving the model this way.
-        model_circ = dict()
-        model_circ['phase'] = search_result_circ.model_phase
-        model_circ['flux'] = search_result_circ.model_flux
-        model_circ['parameters'] = parameters_circ
-
-        result_circ = {'periodogram': periodogram_circ,
-                       'transit_model': model_circ}
-
-        # Build the full (eccentric) periodogram output.
-        if not self.circular_orbits:
-            periodogram_full = dict()
-            periodogram_full['power'] = search_result_full.power
-            periodogram_full['dchisq_dec'] = search_result_full.dchisq_dec
-            periodogram_full['dchisq_inc'] = search_result_full.dchisq_inc
-            periodogram_full['midpoint'] = search_result_full.midpoint
-            periodogram_full['duration'] = search_result_full.duration
-            periodogram_full['depth'] = search_result_full.depth
-            periodogram_full['flux_level'] = search_result_full.flux_level
-            periodogram_full['short_duration'] = search_result_full.duration_lims.short
-            periodogram_full['long_duration'] = search_result_full.duration_lims.long
-            periodogram_full['status_flag'] = search_result_full.status_flag  # TODO name.
-
-            # Save the best-fit model.
-            parameters_full = dict()
-            parameters_full['period'] = search_result_full.best_period
-            parameters_full['midpoint'] = search_result_full.best_midpoint
-            parameters_full['duration'] = search_result_full.best_duration
-            parameters_full['depth'] = search_result_full.best_depth
-            parameters_full['flux_level'] = search_result_full.best_flux_level
-
-            # TODO not too sure about saving the model this way.
-            model_full = dict()
-            model_full['phase'] = search_result_full.model_phase
-            model_full['flux'] = search_result_full.model_flux
-            model_full['parameters'] = parameters_full
-
-            result_full = {'periodogram': periodogram_full,
-                           'transit_model': model_full}
-
         # Build the final file-tree.
         filetree = dict()
         filetree['config'] = {'global': global_config,
                               'target': target_config}
-        filetree['result'] = {'header': header,  # TODO name?
-                              'circular': result_circ}  # TODO Name?
+        filetree['search'] = {'header': search_header,
+                              'circular': search_result_circ}
         if not self.circular_orbits:
-            filetree['result']['eccentric'] = result_full
+            filetree['search']['eccentric'] = search_result_full
 
-        # Save the search results to file.
-        af = asdf.AsdfFile(filetree)
-        af.write_to(output_file)
+        # Convert the filtree to an asdf structure.
+        full_result = asdf.AsdfFile(filetree)
 
-        return
+        if output_file is not None:
+            full_result.write_to(output_file)
+
+        return full_result
 
     def boxy_lstsq(self,
                    time: np.ndarray,
@@ -1146,7 +1080,7 @@ class TransitSearch:
 
         utils._verify_output_file(output_file)
 
-        search_result = _transit_search(
+        search_header, search_result_circ, search_result_full = _transit_search(
             time,
             flux,
             flux_err,
@@ -1172,7 +1106,7 @@ class TransitSearch:
             num_processes=self.num_processes)
 
         target_config = dict()
-        target_config['transit_templates'] = 'BLS'  # TODO name?
+        target_config['templates'] = 'BLS'
         target_config['exp_time'] = exp_time
         target_config['exp_cadence'] = exp_cadence
         target_config['min_stellar_radius'] = min_stellar_radius
@@ -1180,12 +1114,13 @@ class TransitSearch:
         target_config['min_stellar_mass'] = min_stellar_mass
         target_config['max_stellar_mass'] = max_stellar_mass
 
-        if output_file is not None:
-            self._save_search_result(output_file,
-                                     target_config,
-                                     search_result)
+        full_result = self._full_search_result(target_config,
+                                               search_header,
+                                               search_result_circ,
+                                               search_result_full,
+                                               output_file)
 
-        return search_result
+        return full_result
 
     def transit_lstsq(self,
                       time: np.ndarray,
@@ -1206,7 +1141,7 @@ class TransitSearch:
 
         utils._verify_output_file(output_file)
 
-        search_result = _transit_search(
+        search_header, search_result_circ, search_result_full = _transit_search(
             time,
             flux,
             flux_err,
@@ -1234,7 +1169,7 @@ class TransitSearch:
             num_processes=self.num_processes)
 
         target_config = dict()
-        target_config['transit_templates'] = 'TLS'
+        target_config['templates'] = 'TLS'
         target_config['exp_time'] = exp_time
         target_config['exp_cadence'] = exp_cadence
         target_config['min_stellar_radius'] = min_stellar_radius
@@ -1244,12 +1179,13 @@ class TransitSearch:
         target_config['ld_type'] = ld_type
         target_config['ld_pars'] = np.asarray(ld_pars)
 
-        if output_file is not None:
-            self._save_search_result(output_file,
-                                     target_config,
-                                     search_result)
+        full_result = self._full_search_result(target_config,
+                                               search_header,
+                                               search_result_circ,
+                                               search_result_full,
+                                               output_file)
 
-        return search_result
+        return full_result
 
     def warped_lstsq(self,
                      time: np.ndarray,
@@ -1273,7 +1209,7 @@ class TransitSearch:
 
         utils._verify_output_file(output_file)
 
-        search_result = _transit_search(
+        search_header, search_result_circ, search_result_full = _transit_search(
             time,
             flux,
             flux_err,
@@ -1304,7 +1240,7 @@ class TransitSearch:
             num_processes=self.num_processes)
 
         target_config = dict()
-        target_config['transit_templates'] = 'WLS'
+        target_config['templates'] = 'WLS'
         target_config['exp_time'] = exp_time
         target_config['exp_cadence'] = exp_cadence
         target_config['min_stellar_radius'] = min_stellar_radius
@@ -1317,12 +1253,13 @@ class TransitSearch:
         target_config['smooth_weights'] = smooth_weights
         target_config['short_periods'] = short_periods
 
-        if output_file is not None:
-            self._save_search_result(output_file,
-                                     target_config,
-                                     search_result)
+        full_result = self._full_search_result(target_config,
+                                               search_header,
+                                               search_result_circ,
+                                               search_result_full,
+                                               output_file)
 
-        return search_result
+        return full_result
 
 
 def main():

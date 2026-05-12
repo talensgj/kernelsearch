@@ -656,6 +656,35 @@ def get_lstsq_templates(periods: np.ndarray,
     return template_edges, template_models, template_square, template_count
 
 
+def phase_fold(time: np.ndarray,
+               period: float,
+               midpoint: float
+               ) -> np.ndarray:
+    """ Phase-fold a lightcurve to the domain [-0.5, 0.5) with the transit at
+        phase zero.
+
+    Parameters
+    ----------
+    time: np.ndarray
+        The times at which to evaluate the least-squares template.
+    period: float
+        The orbital period of the transit.
+    midpoint: float
+        The mid-transit time of the transit.
+
+    Returns
+    -------
+    phase: np.ndarray
+        The phase of the observations, with the transit centered at zero.
+
+    """
+
+    phase = np.mod((time - midpoint) / period, 1)
+    phase = np.where(phase < 0.5, phase, phase - 1)
+
+    return phase
+
+
 def evaluate_lstsq_template(time: np.ndarray,
                             period: float,
                             midpoint: float,
@@ -686,18 +715,57 @@ def evaluate_lstsq_template(time: np.ndarray,
     Returns
     -------
     phase: np.ndarray
-        The phase of the observations, with the transit centered at 0.5.
+        The phase of the observations, with the transit centered at zero.
     model: np.ndarray
         The transit model evaluated from the least-squares template.
 
     """
 
-    phase = np.mod((time - midpoint) / period - 0.5, 1)  # Phase with transit at 0.5
-    bin_idx = np.searchsorted(template_edges / period + 0.5, phase)  # Phase centered at 0.5
-    template_model = np.append(np.append(0, template_model), 0)
+    phase = phase_fold(time, period, midpoint)
+    bin_idx = np.searchsorted(template_edges / period, phase)
+    template_model = np.concatenate([[0], template_model, [0]])
     model = depth * template_model[bin_idx] + flux_level
 
     return phase, model
+
+
+def plot_lstsq_template(period: float,
+                        depth: float,
+                        flux_level: float,
+                        template_edges: np.ndarray,
+                        template_model: np.ndarray
+                        ) -> tuple[np.ndarray, np.ndarray]:
+    """ Evaluate a transit model from a least-squares template, for plotting
+        with matplotlib.pyplot.stairs.
+
+    Parameters
+    ----------
+    period: float
+        The orbital period of the transit.
+    depth: float
+        The transit depth (Rp/Rs)^2 of the transit.
+    flux_level: float
+        The out-of-transit flux level of the transit.
+    template_edges: np.ndarray
+        The edges of the time bins in which the template was computed.
+    template_model: np.ndarray
+        The template model corresponding to the duration of the transit.
+
+    Returns
+    -------
+    phase_edges: np.ndarray
+        The phase of the template edges, with the transit centered at zero.
+        Contains 1 more element than model.
+    model: np.ndarray
+        The transit model evaluated from the least-squares template.
+
+    """
+
+    phase_edges = np.concatenate([[-0.5], template_edges/period, [0.5]])
+    template_model = np.concatenate([[0], template_model, [0]])
+    model = depth * template_model + flux_level
+
+    return phase_edges, model
 
 
 def main():
