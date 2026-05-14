@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Literal
 from functools import partial
 from dataclasses import dataclass
 from collections import namedtuple
@@ -34,7 +34,7 @@ class PeriodGroup:
     period_idx: tuple[int, int]
     duration_idx: tuple[int, int]
     epoch_step: float
-    search_mode: utils.SearchMode = None
+    search_mode: Literal['skip', utils.SearchMode] = None
 
     def get_period_group(self, period_grid):
         imin, imax = self.period_idx
@@ -206,9 +206,8 @@ def _search_period(period: np.ndarray,
                    chisq0: float,
                    epoch_step: float,
                    duration_grid: np.ndarray,
-                   templates: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                   templates: Optional[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
                    min_points: np.ndarray,
-                   is_short_period: bool,
                    normalisation: utils.Normalisation,
                    smooth_window: float,
                    smooth_weights: utils.SmoothWeights,
@@ -222,7 +221,7 @@ def _search_period(period: np.ndarray,
     """
 
     # At short periods WLS requires special treatment.
-    if is_short_period:
+    if templates is None:
         templates = models.get_lstsq_templates(period,
                                                duration_grid,
                                                epoch_step,
@@ -836,38 +835,39 @@ def _transit_search(time: np.ndarray,
         duration_lims_circ = np.column_stack((duration_circ.short[imin:imax], duration_circ.long[imin:imax]))
         duration_lims_full = np.column_stack((duration_lims.short[imin:imax], duration_lims.long[imin:imax]))
 
-        search_mode_ = search_mode
         is_short_period = False
         baseline = np.amin(period_group) - np.amax(duration_group) - exp_time
         if search_mode == 'WLS' and baseline < smooth_window:
+            group.search_mode = short_periods
             if short_periods == 'skip':
                 LOGDEBUG("  Skipping short periods in WLS search.")
                 continue
             if short_periods == 'TLS':
-                search_mode_: utils.SearchMode = 'TLS'
                 LOGDEBUG("  Using TLS templates for short periods in WLS search.")
             if short_periods == 'WLS':
-                search_mode_: utils.SearchMode = 'TLS'
                 is_short_period = True
                 LOGDEBUG("  Using WLS templates for short periods in WLS search.")
-
-        group.search_mode = search_mode_
+        else:
+            group.search_mode = search_mode
 
         LOGDEBUG(f"  Searching {len(period_group)} periods between {period_group[0]:.3f} days to {period_group[-1]:.3f} days.")
         LOGDEBUG(f"  Searching {len(duration_group)} durations between {duration_group[0]:.2f} days and {duration_group[-1]:.2f} days.")
         LOGDEBUG(f"  Searching using an epoch step of {epoch_step * utils.SEC_IN_DAY / 60:.1f} minutes.")
 
         # Compute the template models for the current period set.
-        templates = models.get_lstsq_templates(period_group,
-                                               duration_group,
-                                               epoch_step,
-                                               exp_time,
-                                               exp_cadence,
-                                               ld_type=ld_type,
-                                               ld_pars=ld_pars,
-                                               search_mode=search_mode_,
-                                               smooth_window=smooth_window,
-                                               smooth_weights=smooth_weights)
+        if not is_short_period:
+            templates = models.get_lstsq_templates(period_group,
+                                                   duration_group,
+                                                   epoch_step,
+                                                   exp_time,
+                                                   exp_cadence,
+                                                   ld_type=ld_type,
+                                                   ld_pars=ld_pars,
+                                                   search_mode=group.search_mode,
+                                                   smooth_window=smooth_window,
+                                                   smooth_weights=smooth_weights)
+        else:
+            templates = None
 
         kwargs = dict()
         kwargs['delta_time'] = delta_time
@@ -879,7 +879,6 @@ def _transit_search(time: np.ndarray,
         kwargs['duration_grid'] = duration_group
         kwargs['templates'] = templates
         kwargs['min_points'] = 0.5*duration_group/exp_cadence
-        kwargs['is_short_period'] = is_short_period
         kwargs['normalisation'] = normalisation
         kwargs['smooth_window'] = smooth_window
         kwargs['smooth_weights'] = smooth_weights
@@ -916,6 +915,9 @@ def _transit_search(time: np.ndarray,
         runtime = timer() - start_time
         tottime += runtime
         LOGDEBUG(f"  Period group searched in {runtime:.1f} seconds.")
+
+    for group in period_groups:
+        print(group)
 
     LOGINFO(f"Full search completed in {tottime:.1f} seconds.")
 
