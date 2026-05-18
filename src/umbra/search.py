@@ -566,9 +566,13 @@ def _1d_periodogram(runtime: float,
     header['chisq0'] = chisq0
     header['periods'] = period_grid
     header['durations'] = duration_grid
-    header['period_groups'] = [group.period_idx for group in period_groups]
-    header['duration_groups'] = [group.duration_idx for group in period_groups]
-    header['template_groups'] = [group.search_mode for group in period_groups]
+
+    groups = dict()
+    groups['period_idx'] = [group.period_idx for group in period_groups]
+    groups['duration_idx'] = [group.duration_idx for group in period_groups]
+    groups['epoch_step'] = [group.epoch_step for group in period_groups]
+    groups['templates'] = [group.search_mode for group in period_groups]
+    header['groups'] = groups
 
     # Save the periodogram.
     periodogram = dict()
