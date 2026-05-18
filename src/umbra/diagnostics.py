@@ -135,13 +135,13 @@ def plot_1d_periodogram(periodogram):
 
     plt.figure(figsize=(12, 15))
 
-    ax = plt.subplot(611, xscale='log')
+    ax = plt.subplot(711, xscale='log')
 
     plt.plot(periodogram['periods'], periodogram['power'])
 
     plt.ylabel('Power')
 
-    plt.subplot(612, sharex=ax)
+    plt.subplot(712, sharex=ax)
 
     plt.plot(periodogram['periods'], periodogram['dchisq_dec'], label=r'$\Delta\chi^2_{-}$')
     plt.plot(periodogram['periods'], periodogram['dchisq_inc'], label=r'$\Delta\chi^2_{+}$')
@@ -149,12 +149,17 @@ def plot_1d_periodogram(periodogram):
     plt.legend()
     plt.ylabel(r'$\Delta\chi^2$')
 
-    plt.subplot(613, sharex=ax)
+    plt.subplot(713, sharex=ax)
+    plt.plot(periodogram['periods'], periodogram['num_points'])
+
+    plt.ylabel('In-transit Points')
+
+    plt.subplot(714, sharex=ax)
     plt.plot(periodogram['periods'], np.mod(periodogram['midpoint']/periodogram['periods'], 1))
 
     plt.ylabel('Phase')
 
-    plt.subplot(614, yscale='log', sharex=ax)
+    plt.subplot(715, yscale='log', sharex=ax)
 
     plt.plot(periodogram['periods'], periodogram['duration'])
 
@@ -163,13 +168,13 @@ def plot_1d_periodogram(periodogram):
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(615, sharex=ax)
+    plt.subplot(716, sharex=ax)
 
     plt.plot(periodogram['periods'], 1e6 * periodogram['depth'])
 
     plt.ylabel('Depth [ppm]')
 
-    plt.subplot(616, sharex=ax)
+    plt.subplot(717, sharex=ax)
 
     plt.plot(periodogram['periods'], 1e6 * (periodogram['flux_level'] - 1))
 
@@ -189,6 +194,7 @@ def plot_2d_periodogram(period_grid,
                         power,
                         dchisq_dec,
                         dchisq_inc,
+                        num_points,
                         midpoint_vals,
                         depth_vals,
                         flux_level_vals,
@@ -197,7 +203,7 @@ def plot_2d_periodogram(period_grid,
 
     plt.figure(figsize=(12, 15))
 
-    plt.subplot(611, xscale='log', yscale='log')
+    plt.subplot(711, xscale='log', yscale='log')
 
     plt.title('power')
     plt.pcolormesh(period_grid, duration_grid, power.T)
@@ -210,7 +216,7 @@ def plot_2d_periodogram(period_grid,
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(612, xscale='log', yscale='log')
+    plt.subplot(712, xscale='log', yscale='log')
     plt.title('dchisq_dec')
     plt.pcolormesh(period_grid, duration_grid, dchisq_dec.T)
 
@@ -222,7 +228,7 @@ def plot_2d_periodogram(period_grid,
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(613, xscale='log', yscale='log')
+    plt.subplot(713, xscale='log', yscale='log')
     plt.title('dchisq_inc')
     plt.pcolormesh(period_grid, duration_grid, dchisq_inc.T)
 
@@ -232,9 +238,19 @@ def plot_2d_periodogram(period_grid,
     plt.plot(period_grid, duration_circ.short, c='k', ls='--')
     plt.plot(period_grid, duration_circ.long, c='k', ls='--')
 
+    plt.subplot(714, xscale='log', yscale='log')
+    plt.title('num_points')
+    plt.pcolormesh(period_grid, duration_grid, num_points.T)
+
+    plt.plot(period_grid, duration_full.short, c='k')
+    plt.plot(period_grid, duration_full.long, c='k')
+
+    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
+    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+
     plt.ylabel('Duration [days]')
 
-    plt.subplot(614, xscale='log', yscale='log')
+    plt.subplot(715, xscale='log', yscale='log')
     plt.title('phase')
     plt.pcolormesh(period_grid, duration_grid, np.mod(midpoint_vals/period_grid[:, np.newaxis], 1).T)
 
@@ -246,7 +262,7 @@ def plot_2d_periodogram(period_grid,
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(615, xscale='log', yscale='log')
+    plt.subplot(716, xscale='log', yscale='log')
     plt.title('depth')
     plt.pcolormesh(period_grid, duration_grid, depth_vals.T)
 
@@ -258,7 +274,7 @@ def plot_2d_periodogram(period_grid,
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(616, xscale='log', yscale='log')
+    plt.subplot(717, xscale='log', yscale='log')
     plt.title('flux_level')
     plt.pcolormesh(period_grid, duration_grid, flux_level_vals.T)
 

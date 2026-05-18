@@ -218,7 +218,7 @@ def _search_period(period: np.ndarray,
                    ld_type: utils.LDType,
                    ld_pars: ArrayLike,
                    debug: bool = False
-                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """ Perform the transit search for a single period value.
     """
 
@@ -322,6 +322,7 @@ def _search_period(period: np.ndarray,
     icol = np.argmax(power, axis=1)
     power = power[irow, icol]
     dchisq_dec = dchisq_dec[irow, icol]
+    num_points = num_points[irow, icol]
 
     # Store the parameters corresponding to peak power values.
     phase_grid = (bin_edges[:-ncols] + bin_edges[ncols:])/2
@@ -343,7 +344,7 @@ def _search_period(period: np.ndarray,
     best_model_full = template_models[jmin + arg]
     best_vals_full = (best_power_full, template_edges, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, num_points, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
@@ -353,6 +354,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     power = np.full((nrows, ncols), np.nan)
     dchisq_dec = np.full((nrows, ncols), np.nan)
     dchisq_inc = np.full((nrows, ncols), np.nan)
+    num_points = np.full((nrows, ncols), 0, dtype='uint32')
     phase_vals = np.full((nrows, ncols), np.nan)
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
@@ -373,12 +375,13 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
         power[i] = result[0]
         dchisq_dec[i] = result[1]
         dchisq_inc[i] = result[2]
-        phase_vals[i] = result[3]
-        depth_vals[i] = result[4]
-        flux_level_vals[i] = result[5]
+        num_points[i] = result[3]
+        phase_vals[i] = result[4]
+        depth_vals[i] = result[5]
+        flux_level_vals[i] = result[6]
 
-        (power_circ, edges_circ, model_circ) = result[6]
-        (power_full, edges_full, model_full) = result[7]
+        (power_circ, edges_circ, model_circ) = result[7]
+        (power_full, edges_full, model_full) = result[8]
 
         if power_circ > best_power_circ:
             best_power_circ = power_circ
@@ -393,7 +396,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, num_points, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _search_periods_with_pool(num_processes, periods, duration_lims_circ, duration_lims_full, **kwargs):
@@ -403,6 +406,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     power = np.full((nrows, ncols), np.nan)
     dchisq_dec = np.full((nrows, ncols), np.nan)
     dchisq_inc = np.full((nrows, ncols), np.nan)
+    num_points = np.full((nrows, ncols), 0, dtype='uint32')
     phase_vals = np.full((nrows, ncols), np.nan)
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
@@ -433,12 +437,13 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
             power[i::num_processes, :] = result[0]
             dchisq_dec[i::num_processes, :] = result[1]
             dchisq_inc[i::num_processes, :] = result[2]
-            phase_vals[i::num_processes, :] = result[3]
-            depth_vals[i::num_processes, :] = result[4]
-            flux_level_vals[i::num_processes, :] = result[5]
+            num_points[i::num_processes, :] = result[3]
+            phase_vals[i::num_processes, :] = result[4]
+            depth_vals[i::num_processes, :] = result[5]
+            flux_level_vals[i::num_processes, :] = result[6]
 
-            (power_circ, edges_circ, model_circ) = result[6]
-            (power_full, edges_full, model_full) = result[7]
+            (power_circ, edges_circ, model_circ) = result[7]
+            (power_full, edges_full, model_full) = result[8]
 
             if power_circ > best_power_circ:
                 best_power_circ = power_circ
@@ -455,7 +460,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, num_points, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _prepare_lightcurve(time: np.ndarray,
@@ -497,6 +502,7 @@ def _1d_periodogram(runtime: float,
                     lc_size: int,
                     dchisq_dec: np.ndarray,
                     dchisq_inc: np.ndarray,
+                    num_points: np.ndarray,
                     midpoint_vals: np.ndarray,
                     depth_vals: np.ndarray,
                     flux_level_vals: np.ndarray,
@@ -525,6 +531,7 @@ def _1d_periodogram(runtime: float,
     power = power[irow, icol]
     dchisq_dec = dchisq_dec[irow, icol]
     dchisq_inc = dchisq_inc[irow, icol]
+    num_points = num_points[irow, icol]
     midpoint_vals = midpoint_vals[irow, icol]
     duration_vals = duration_grid[icol]
     depth_vals = depth_vals[irow, icol]
@@ -535,6 +542,7 @@ def _1d_periodogram(runtime: float,
     power = np.where(nanmask, np.nan, power)
     dchisq_dec = np.where(nanmask, np.nan, dchisq_dec)
     dchisq_inc = np.where(nanmask, np.nan, dchisq_inc)
+    num_points = np.where(nanmask, 0, num_points)
     midpoint_vals = np.where(nanmask, np.nan, midpoint_vals)
     duration_vals = np.where(nanmask, np.nan, duration_vals)
     depth_vals = np.where(nanmask, np.nan, depth_vals)
@@ -582,6 +590,7 @@ def _1d_periodogram(runtime: float,
     periodogram['power'] = power
     periodogram['dchisq_dec'] = dchisq_dec
     periodogram['dchisq_inc'] = dchisq_inc
+    periodogram['num_points'] = num_points
     periodogram['midpoint'] = midpoint_vals
     periodogram['duration'] = duration_vals
     periodogram['depth'] = depth_vals
@@ -811,6 +820,7 @@ def _transit_search(time: np.ndarray,
     power = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_dec = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_inc = np.full((nrows, ncols), fill_value=np.nan)
+    num_points = np.full((nrows, ncols), fill_value=0, dtype='uint32')
     phase_vals = np.full((nrows, ncols), fill_value=np.nan)
     depth_vals = np.full((nrows, ncols), fill_value=np.nan)
     flux_level_vals = np.full((nrows, ncols), fill_value=np.nan)
@@ -900,12 +910,13 @@ def _transit_search(time: np.ndarray,
         power[imin:imax, jmin:jmax] = result[0]
         dchisq_dec[imin:imax, jmin:jmax] = result[1]
         dchisq_inc[imin:imax, jmin:jmax] = result[2]
-        phase_vals[imin:imax, jmin:jmax] = result[3]
-        depth_vals[imin:imax, jmin:jmax] = result[4]
-        flux_level_vals[imin:imax, jmin:jmax] = result[5]
+        num_points[imin:imax, jmin:jmax] = result[3]
+        phase_vals[imin:imax, jmin:jmax] = result[4]
+        depth_vals[imin:imax, jmin:jmax] = result[5]
+        flux_level_vals[imin:imax, jmin:jmax] = result[6]
 
-        (power_circ, edges_circ, model_circ) = result[6]
-        (power_full, edges_full, model_full) = result[7]
+        (power_circ, edges_circ, model_circ) = result[7]
+        (power_full, edges_full, model_full) = result[8]
 
         if power_circ > best_power_circ:
             best_power_circ = power_circ
@@ -935,7 +946,7 @@ def _transit_search(time: np.ndarray,
     midpoint_vals = tstart + period_grid[:, np.newaxis]*np.mod(phase_vals, 1)
 
     if utils.DEBUG:
-        diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
+        diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, num_points, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
 
     # Generate the final periodogram for circular orbits.
     search_header, search_result_circ = _1d_periodogram(
@@ -948,6 +959,7 @@ def _transit_search(time: np.ndarray,
         delta_time.size,
         dchisq_dec,
         dchisq_inc,
+        num_points,
         midpoint_vals,
         depth_vals,
         flux_level_vals,
@@ -971,6 +983,7 @@ def _transit_search(time: np.ndarray,
             delta_time.size,
             dchisq_dec,
             dchisq_inc,
+            num_points,
             midpoint_vals,
             depth_vals,
             flux_level_vals,
