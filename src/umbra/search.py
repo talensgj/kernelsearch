@@ -494,6 +494,7 @@ def _1d_periodogram(runtime: float,
                     period_groups: list[PeriodGroup],
                     power: np.ndarray,
                     chisq0: float,
+                    lc_size: int,
                     dchisq_dec: np.ndarray,
                     dchisq_inc: np.ndarray,
                     midpoint_vals: np.ndarray,
@@ -564,6 +565,7 @@ def _1d_periodogram(runtime: float,
     header = dict()
     header['runtime'] = runtime
     header['chisq0'] = chisq0
+    header['lc_size'] = lc_size
     header['periods'] = period_grid
     header['durations'] = duration_grid
 
@@ -943,6 +945,7 @@ def _transit_search(time: np.ndarray,
         period_groups,
         power,
         chisq0,
+        delta_time.size,
         dchisq_dec,
         dchisq_inc,
         midpoint_vals,
@@ -965,6 +968,7 @@ def _transit_search(time: np.ndarray,
             period_groups,
             power,
             chisq0,
+            delta_time.size,
             dchisq_dec,
             dchisq_inc,
             midpoint_vals,
