@@ -500,6 +500,7 @@ def _1d_periodogram(runtime: float,
                     power: np.ndarray,
                     chisq0: float,
                     lc_size: int,
+                    baseline: float,
                     dchisq_dec: np.ndarray,
                     dchisq_inc: np.ndarray,
                     num_points: np.ndarray,
@@ -548,6 +549,12 @@ def _1d_periodogram(runtime: float,
     depth_vals = np.where(nanmask, np.nan, depth_vals)
     flux_level_vals = np.where(nanmask, np.nan, flux_level_vals)
 
+    # Compute the number of transits.
+    phase_vals = np.mod(midpoint_vals/period_grid, 1)
+    num_transits = np.zeros_like(period_grid)
+    for i, (phase_, period_, duration_) in enumerate(zip(phase_vals, period_grid, duration_vals)):
+        num_transits[i] = models.get_num_transits(phase_, period_, duration_, baseline)
+
     # Create status flags.
     status_flag = np.zeros_like(duration_vals, dtype='uint8')
     if duration_circ is not None:
@@ -574,6 +581,7 @@ def _1d_periodogram(runtime: float,
     header['runtime'] = runtime
     header['chisq0'] = chisq0
     header['lc_size'] = lc_size
+    header['baseline'] = baseline
     header['periods'] = period_grid
     header['durations'] = duration_grid
 
@@ -591,6 +599,7 @@ def _1d_periodogram(runtime: float,
     periodogram['dchisq_dec'] = dchisq_dec
     periodogram['dchisq_inc'] = dchisq_inc
     periodogram['num_points'] = num_points
+    periodogram['num_transits'] = num_transits
     periodogram['midpoint'] = midpoint_vals
     periodogram['duration'] = duration_vals
     periodogram['depth'] = depth_vals
@@ -957,6 +966,7 @@ def _transit_search(time: np.ndarray,
         power,
         chisq0,
         delta_time.size,
+        np.ptp(delta_time),
         dchisq_dec,
         dchisq_inc,
         num_points,
@@ -981,6 +991,7 @@ def _transit_search(time: np.ndarray,
             power,
             chisq0,
             delta_time.size,
+            np.ptp(delta_time),
             dchisq_dec,
             dchisq_inc,
             num_points,

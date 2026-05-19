@@ -21,6 +21,57 @@ LOGERROR = logger.error
 LOGEXCEPTION = logger.exception
 
 
+def get_num_transits(phase: Union[float, np.ndarray],
+                     period: float,
+                     duration: Union[float, np.ndarray],
+                     baseline: float,
+                     brute_force: bool = False):
+    """ Compute the exact number of transits seen in a particular baseline.
+
+    """
+
+    # Handle both scalars and array as input for phase and duration.
+    phase_grid = np.asarray(phase)
+    duration_grid = np.asarray(duration)
+
+    if phase_grid.ndim == 0:
+        phase_grid = phase_grid.reshape((1,))
+
+    if duration_grid.ndim == 0:
+        duration_grid = duration_grid.reshape((1,))
+
+    # Ensure phases are in the range [0, 1).
+    phase_grid = np.mod(phase_grid, 1)
+
+    # Compute the available space in the baseline and the maximum number of transits.
+    num_folds = baseline/period
+    max_transits = np.floor(num_folds + 1).astype('int')
+
+    # Check only transit that can be partially out of view.
+    # That is np.arange(-1, max_transits) the first 2 and last 2 values.
+    transit_idx = np.arange(-1, max_transits)
+
+    if max_transits > 3 and not brute_force:
+        transit_idx = np.array([-1, 0, max_transits - 2, max_transits - 1])
+
+    # Start and end phases of these transits.
+    phase_0 = phase_grid[np.newaxis, :, np.newaxis] + transit_idx[np.newaxis, np.newaxis, :] - duration_grid[:, np.newaxis, np.newaxis]/period/2
+    phase_1 = phase_grid[np.newaxis, :, np.newaxis] + transit_idx[np.newaxis, np.newaxis, :] + duration_grid[:, np.newaxis, np.newaxis]/period/2
+
+    # Clip based on the basline.
+    phase_0 = np.clip(phase_0, 0, num_folds)
+    phase_1 = np.clip(phase_1, 0, num_folds)
+
+    # Compute the number of transits.
+    offset = max_transits - len(transit_idx) + 1  # Number of transits not explitly checked.
+    num_transits = offset + np.sum(phase_1 - phase_0, axis=2)*period/duration_grid[:, np.newaxis]
+
+    # Remove excess dimensions.
+    num_transits = np.squeeze(num_transits)
+
+    return num_transits
+
+
 def _ecc_factors(eccentricity: Union[float, np.ndarray],
                  arg_periastron: Union[float, np.ndarray]
                  ) -> tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:

@@ -149,7 +149,7 @@ def plot_1d_periodogram(periodogram):
     plt.legend()
     plt.ylabel(r'$\Delta\chi^2$')
 
-    plt.subplot(713, sharex=ax)
+    plt.subplot(713, yscale='log', sharex=ax)
     plt.plot(periodogram['periods'], periodogram['num_points'])
 
     plt.ylabel('In-transit Points')
