@@ -955,7 +955,12 @@ def _transit_search(time: np.ndarray,
     midpoint_vals = tstart + period_grid[:, np.newaxis]*np.mod(phase_vals, 1)
 
     if utils.DEBUG:
-        diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, num_points, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
+        if circular_orbits:
+            duration_full_ = None
+        else:
+            duration_full_ = duration_full
+
+        diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, num_points, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full_)
 
     # Generate the final periodogram for circular orbits.
     search_header, search_result_circ = _1d_periodogram(

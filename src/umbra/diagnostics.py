@@ -199,7 +199,7 @@ def plot_2d_periodogram(period_grid,
                         depth_vals,
                         flux_level_vals,
                         duration_circ,
-                        duration_full):
+                        duration_full=None):
 
     plt.figure(figsize=(12, 15))
 
@@ -208,11 +208,12 @@ def plot_2d_periodogram(period_grid,
     plt.title('power')
     plt.pcolormesh(period_grid, duration_grid, power.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
@@ -220,11 +221,12 @@ def plot_2d_periodogram(period_grid,
     plt.title('dchisq_dec')
     plt.pcolormesh(period_grid, duration_grid, dchisq_dec.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
@@ -232,21 +234,23 @@ def plot_2d_periodogram(period_grid,
     plt.title('dchisq_inc')
     plt.pcolormesh(period_grid, duration_grid, dchisq_inc.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.subplot(714, xscale='log', yscale='log')
     plt.title('num_points')
     plt.pcolormesh(period_grid, duration_grid, num_points.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
@@ -254,11 +258,12 @@ def plot_2d_periodogram(period_grid,
     plt.title('phase')
     plt.pcolormesh(period_grid, duration_grid, np.mod(midpoint_vals/period_grid[:, np.newaxis], 1).T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
@@ -266,11 +271,12 @@ def plot_2d_periodogram(period_grid,
     plt.title('depth')
     plt.pcolormesh(period_grid, duration_grid, depth_vals.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
@@ -278,11 +284,12 @@ def plot_2d_periodogram(period_grid,
     plt.title('flux_level')
     plt.pcolormesh(period_grid, duration_grid, flux_level_vals.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.xlabel('Period [days]')
     plt.ylabel('Duration [days]')
@@ -342,7 +349,6 @@ def plot_period_groups(period_grid: np.ndarray,
         else:
             plt.axvline(period_grid[imin], c='k')
 
-    plt.xlabel('Period [days]')
     plt.ylabel('Duration [days]')
 
     plt.subplot(212, xscale='log', yscale='log', sharex=ax)
