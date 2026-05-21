@@ -916,9 +916,6 @@ def _transit_search(time: np.ndarray,
         tottime += runtime
         LOGDEBUG(f"  Period group searched in {runtime:.1f} seconds.")
 
-    for group in period_groups:
-        print(group)
-
     LOGINFO(f"Full search completed in {tottime:.1f} seconds.")
 
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
