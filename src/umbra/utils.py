@@ -233,15 +233,24 @@ def _verify_epoch_grid_params(epoch_sampling: int,
     return
 
 
-def _verify_duration_grid_params(circular_orbits: bool,
-                                 frac_duration_step: float
-                                 ):
-    """ Check the duration grid parameters are valid.
+def _verify_duration_lims_params(circular_orbits: bool,
+                                 frac_eccentricity: float):
+    """ Check the duration limits parameters are valid.
     """
 
     if not isinstance(circular_orbits, bool):
         msg = f"Parameter circular_orbits must be boolean."
         raise ValueError(msg)
+
+    if not (0 < frac_eccentricity <= 1):
+        msg = f"Parameter frac_eccentricity must be in range (0, 1]."
+        raise ValueError(msg)
+
+    return
+
+def _verify_frac_duration_step(frac_duration_step: float):
+    """ Check the frac_duration_step parameter is valid.
+    """
 
     if not (1 < frac_duration_step <= 1.5):
         msg = f"Parameter frac_duration_step must be in range (1, 1.5]."

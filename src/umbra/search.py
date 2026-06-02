@@ -648,6 +648,7 @@ def _transit_search(time: np.ndarray,
                     min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                     max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                     circular_orbits: bool = True,
+                    frac_eccentricity: float = 0.95,
                     frac_duration_step: float = 1.05,
                     period_group_sampling: int = 3,
                     normalisation: utils.Normalisation = 'umbra',
@@ -705,6 +706,10 @@ def _transit_search(time: np.ndarray,
     circular_orbits: bool
         If True, search transit durations appropriate for circular orbits,
         otherwise search a wider range for eccentric orbits (default: True).
+    frac_eccentricity: float
+        The fraction of the maximum stable eccentricity to consider, slightly
+        limits the size of the duration space searched when circular_orbits =
+        False (default: 0.95).
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
         grid with log-steps of log10(frac_duration_step) (default: 1.05).
@@ -754,7 +759,8 @@ def _transit_search(time: np.ndarray,
     utils._verify_stellar_params(min_stellar_radius, max_stellar_radius, min_stellar_mass, max_stellar_mass)
     utils._verify_period_grid_params(min_transits, min_separation, period_sampling, min_period, max_period)
     utils._verify_epoch_grid_params(epoch_sampling, min_epoch_step, max_epoch_step)
-    utils._verify_duration_grid_params(circular_orbits, frac_duration_step)
+    utils._verify_duration_lims_params(circular_orbits, frac_eccentricity)
+    utils._verify_frac_duration_step(frac_duration_step)
     utils._verify_period_group_sampling(period_group_sampling)
     utils._verify_normalisation(normalisation)
     ld_pars = utils._verify_ld_params(ld_type, ld_pars)
@@ -793,7 +799,8 @@ def _transit_search(time: np.ndarray,
                                                            stellar_density_bounds,
                                                            stellar_radius_bounds,
                                                            min_separation=min_separation,
-                                                           circular_orbits=False)
+                                                           circular_orbits=False,
+                                                           frac_eccentricity=frac_eccentricity)
 
     if circular_orbits:
         duration_lims = duration_circ
@@ -1026,6 +1033,7 @@ class TransitSearch:
                  min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                  max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                  circular_orbits: bool = True,
+                 frac_eccentricity: float = 0.95,
                  frac_duration_step: float = 1.05,
                  period_group_sampling: int = 3,
                  normalisation: utils.Normalisation = 'umbra',
@@ -1037,7 +1045,8 @@ class TransitSearch:
         # Check the input parameters.
         utils._verify_period_grid_params(min_transits, min_separation, period_sampling, min_period, max_period)
         utils._verify_epoch_grid_params(epoch_sampling, min_epoch_step, max_epoch_step)
-        utils._verify_duration_grid_params(circular_orbits, frac_duration_step)
+        utils._verify_duration_lims_params(circular_orbits, frac_eccentricity)
+        utils._verify_frac_duration_step(frac_duration_step)
         utils._verify_period_group_sampling(period_group_sampling)
         utils._verify_normalisation(normalisation)
         num_processes = utils._verify_num_processes(num_processes)
@@ -1052,6 +1061,7 @@ class TransitSearch:
         self.min_epoch_step = min_epoch_step
         self.max_epoch_step = max_epoch_step
         self.circular_orbits = circular_orbits
+        self.frac_eccentricity = frac_eccentricity
         self.frac_duration_step = frac_duration_step
         self.period_group_sampling = period_group_sampling
         self.normalisation = normalisation
@@ -1078,6 +1088,7 @@ class TransitSearch:
         global_config['min_epoch_step'] = self.min_epoch_step
         global_config['max_epoch_step'] = self.max_epoch_step
         global_config['circular_orbits'] = self.circular_orbits
+        global_config['frac_eccentricity'] = self.frac_eccentricity
         global_config['frac_duration_step'] = self.frac_duration_step
         global_config['period_group_sampling'] = self.period_group_sampling
         global_config['normalisation'] = self.normalisation
@@ -1136,6 +1147,7 @@ class TransitSearch:
             min_epoch_step=self.min_epoch_step,
             max_epoch_step=self.max_epoch_step,
             circular_orbits=self.circular_orbits,
+            frac_eccentricity=self.frac_eccentricity,
             frac_duration_step=self.frac_duration_step,
             period_group_sampling=self.period_group_sampling,
             normalisation=self.normalisation,
@@ -1197,6 +1209,7 @@ class TransitSearch:
             min_epoch_step=self.min_epoch_step,
             max_epoch_step=self.max_epoch_step,
             circular_orbits=self.circular_orbits,
+            frac_eccentricity=self.frac_eccentricity,
             frac_duration_step=self.frac_duration_step,
             period_group_sampling=self.period_group_sampling,
             normalisation=self.normalisation,
@@ -1265,6 +1278,7 @@ class TransitSearch:
             min_epoch_step=self.min_epoch_step,
             max_epoch_step=self.max_epoch_step,
             circular_orbits=self.circular_orbits,
+            frac_eccentricity=self.frac_eccentricity,
             frac_duration_step=self.frac_duration_step,
             period_group_sampling=self.period_group_sampling,
             normalisation=self.normalisation,

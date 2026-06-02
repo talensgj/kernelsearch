@@ -230,7 +230,9 @@ DurationLimits = namedtuple('duration_limits', ['short', 'long'])
 
 
 def get_stable_orbits(sm_axis: np.ndarray,
-                      min_separation: float = 3.
+                      min_separation: float = 3.,
+                      circular_orbits: bool = False,
+                      frac_eccentricity: float = 0.95
                       ) -> StableOrbit:
     """ Compute the limiting values for the semi-major axis and eccentricty
         that still result in stable orbits.
@@ -243,6 +245,13 @@ def get_stable_orbits(sm_axis: np.ndarray,
         The minimum orbital separation between the host star and the planet in
         stellar radii. Orbits are stable if the separation at closest approach
         is greater than this value (default: 3).
+    circular_orbits: bool
+        If True compute the shortest and longest duration on circular orbits,
+        i.e. forces the eccentricty to zero (default: False).
+    frac_eccentricity: float
+        The fraction of the maximum stable eccentricity to consider, slightly
+        limits the size of the duration space searched when circular_orbits =
+        False (default: 0.95).
 
     Returns
     -------
@@ -253,6 +262,7 @@ def get_stable_orbits(sm_axis: np.ndarray,
     """
 
     utils._verify_min_separation(min_separation)
+    utils._verify_duration_lims_params(circular_orbits, frac_eccentricity)
 
     # Not all densities produce stable orbits at low periods.
     sm_axis_stable = np.maximum(sm_axis, min_separation)
@@ -260,6 +270,11 @@ def get_stable_orbits(sm_axis: np.ndarray,
     # Not all eccentricties produce stable orbits.
     # Stable orbits asymptotically approach ecc -> 1 as a/R -> inf.
     ecc_stable = (sm_axis_stable - min_separation)/sm_axis_stable
+
+    if circular_orbits:
+        ecc_stable = np.zeros_like(ecc_stable)
+    else:
+        ecc_stable = frac_eccentricity * ecc_stable
 
     stable_orbit = StableOrbit(sm_axis=sm_axis_stable, ecc=ecc_stable)
 
@@ -269,7 +284,9 @@ def get_stable_orbits(sm_axis: np.ndarray,
 def get_orbit_bounds(period_grid: np.ndarray,
                      min_stellar_density: float,
                      max_stellar_density: float,
-                     min_separation: float = 3.
+                     min_separation: float = 3.,
+                     circular_orbits: bool = False,
+                     frac_eccentricity: float = 0.95
                      ) -> tuple[StableOrbit, StableOrbit]:
     """ Given an array of period values and a stellar density interval, compute
         the bounding semi-major axis and eccentricity values of the inner and
@@ -287,6 +304,13 @@ def get_orbit_bounds(period_grid: np.ndarray,
         The minimum orbital separation between the host star and the planet in
         stellar radii. Orbits are stable if the separation at closest approach
         is greater than this value (default: 3).
+    circular_orbits: bool
+        If True compute the shortest and longest duration on circular orbits,
+        i.e. forces the eccentricty to zero (default: False).
+    frac_eccentricity: float
+        The fraction of the maximum stable eccentricity to consider, slightly
+        limits the size of the duration space searched when circular_orbits =
+        False (default: 0.95).
 
     Returns
     -------
@@ -304,8 +328,15 @@ def get_orbit_bounds(period_grid: np.ndarray,
     sm_axis_outer = models.get_sm_axis_kepler(max_stellar_density, period_grid)
 
     # Check the range of semi-major axes and eccentricties that produce stable orbits.
-    inner_orbit = get_stable_orbits(sm_axis_inner, min_separation=min_separation)
-    outer_orbit = get_stable_orbits(sm_axis_outer, min_separation=min_separation)
+    inner_orbit = get_stable_orbits(sm_axis_inner,
+                                    min_separation=min_separation,
+                                    circular_orbits=circular_orbits,
+                                    frac_eccentricity=frac_eccentricity)
+
+    outer_orbit = get_stable_orbits(sm_axis_outer,
+                                    min_separation=min_separation,
+                                    circular_orbits=circular_orbits,
+                                    frac_eccentricity=frac_eccentricity)
 
     return inner_orbit, outer_orbit
 
@@ -317,6 +348,7 @@ def get_transit_duration_limits(period_grid: np.ndarray,
                                 impact_param_bounds: tuple[float, float] = (0.0, 0.9),
                                 min_separation: float = 3.,
                                 circular_orbits: bool = False,
+                                frac_eccentricity: float = 0.95
                                 ) -> tuple[DurationLimits, StableOrbit, StableOrbit]:
     """ Compute the minimum and maximum transit duration as a function of the
         orbital period, given possible bounds on the stellar density and
@@ -346,6 +378,10 @@ def get_transit_duration_limits(period_grid: np.ndarray,
     circular_orbits: bool
         If True compute the shortest and longest duration on circular orbits,
         i.e. forces the eccentricty to zero (default: False).
+    frac_eccentricity: float
+        The fraction of the maximum stable eccentricity to consider, slightly
+        limits the size of the duration space searched when circular_orbits =
+        False (default: 0.95).
 
     Returns
     -------
@@ -371,7 +407,9 @@ def get_transit_duration_limits(period_grid: np.ndarray,
     period_break = get_min_period(min_stellar_density, min_separation)
 
     if np.any(period_grid < period_min):
-        raise ValueError("The shortest period in period_grid is incompatible with the stellar density bounds, please fix your inputs.")
+        msg = ("The shortest period in period_grid is incompatible with the"
+               " stellar density bounds, please fix your inputs.")
+        raise ValueError(msg)
 
     # The minimum stellar density goes up from Pbreak to Pmin.
     # The corresponding stellar radius should decrease.
@@ -385,16 +423,28 @@ def get_transit_duration_limits(period_grid: np.ndarray,
     max_radius_ratio = max_planet_radius/stellar_radius_mindens
 
     # Compute the scaled semi-major axis and eccentricty limits for the density values.
-    result = get_orbit_bounds(period_grid, min_stellar_density, max_stellar_density, min_separation=min_separation)
+    result = get_orbit_bounds(period_grid,
+                              min_stellar_density,
+                              max_stellar_density,
+                              min_separation=min_separation,
+                              circular_orbits=circular_orbits,
+                              frac_eccentricity=frac_eccentricity)
     inner_orbit, outer_orbit = result
 
-    if circular_orbits:
-        outer_orbit = outer_orbit._replace(ecc=np.zeros_like(period_grid))
-        inner_orbit = inner_orbit._replace(ecc=np.zeros_like(period_grid))
-
     # Compute the duration limits for the given parameter bounds.
-    duration_short = models.get_transit_duration(period_grid, outer_orbit.sm_axis, min_radius_ratio, max_impact_param, outer_orbit.ecc, 90.)
-    duration_long = models.get_transit_duration(period_grid, inner_orbit.sm_axis, max_radius_ratio, min_impact_param, inner_orbit.ecc, 270.)
+    duration_short = models.get_transit_duration(period_grid,
+                                                 outer_orbit.sm_axis,
+                                                 min_radius_ratio,
+                                                 max_impact_param,
+                                                 outer_orbit.ecc,
+                                                 90.)
+
+    duration_long = models.get_transit_duration(period_grid,
+                                                inner_orbit.sm_axis,
+                                                max_radius_ratio,
+                                                min_impact_param,
+                                                inner_orbit.ecc,
+                                                270.)
 
     duration_limits = DurationLimits(short=duration_short, long=duration_long)
 
@@ -424,7 +474,7 @@ def get_transit_duration_grid(min_duration: float,
 
     """
 
-    utils._verify_duration_grid_params(True, frac_duration_step)
+    utils._verify_frac_duration_step(frac_duration_step)
 
     if max_duration < min_duration:
         msg = f"The maximum duration is less than the minimum duration, please fix your inputs."
