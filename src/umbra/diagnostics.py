@@ -98,11 +98,13 @@ def plot_power_at_period(phase_grid, duration_grid, power, depth, num_points, mi
     return
 
 
-def plot_lightcurve(time,
+def plot_quick_look(time,
                     flux,
+                    periodogram,
                     transit_model,
-                    smooth_window=None):
-    """ Make a diagnostic plot of the phase-folded lightcurve.
+                    smooth_window=None,
+                    figure_file=None):
+    """ Make a diagnostic plot of the periodogram and phase-folded lightcurve.
     """
 
     if smooth_window is None:
@@ -111,21 +113,44 @@ def plot_lightcurve(time,
     parameters = transit_model['parameters']
     phase = models.phase_fold(time, parameters['period'], parameters['midpoint'])
 
-    plt.figure(figsize=(12, 3))
+    plt.figure(figsize=(12, 5))
 
-    plt.subplot(111)
+    plt.subplot(211, xscale='log')
 
-    plt.plot(phase, 1e6 * (flux - 1), '.', markersize=5, markeredgecolor='None', alpha=0.5, color='gray')
+    plt.plot(periodogram['periods'], periodogram['power'])
+    plt.axvline(parameters['period'], c='k', zorder=-10)
+
+    xmin = periodogram['periods'][0]
+    xmax = periodogram['periods'][-1]
+
+    plt.xlim(xmin, xmax)
+
+    plt.xlabel('Period [days]')
+    plt.ylabel('Power')
+
+    plt.subplot(212)
+
+    plt.plot(phase, 1e6 * (flux - 1), '.', markersize=5, markeredgecolor='None', alpha=0.5, color='gray', rasterized=True)
     plt.stairs(1e6 * (transit_model['flux'] - 1), transit_model['phase_edges'], baseline=None, lw=2, color='k', zorder=10)
+    plt.axhline(1e6 * (parameters['flux_level'] - 1), c='k', ls='--', zorder=9)
 
-    dx = 2*parameters['duration']/parameters['period'] + smooth_window/2
+    dx = parameters['duration']/parameters['period']
+    plt.axvspan(-0.5*dx, 0.5*dx, color='C0', alpha=0.2, zorder=-10)
+
+    dtime = parameters['duration'] + 0.5*smooth_window
+    dx = dtime / parameters['period']
+    dx = np.minimum(dx, 0.5)
+
     plt.xlim(-dx, dx)
 
     plt.xlabel('Phase')
     plt.ylabel(r'$\Delta$Flux [ppm]')
 
     plt.tight_layout()
-    plt.show()
+    if figure_file is not None:
+        plt.savefig(figure_file, dpi=180)
+    else:
+        plt.show()
     plt.close()
 
     return

@@ -989,8 +989,11 @@ def _transit_search(time: np.ndarray,
         duration_lims=duration_circ)
 
     if utils.DEBUG:
-        diagnostics.plot_lightcurve(time, flux, search_result_circ['transit_model'], smooth_window)
-        diagnostics.plot_1d_periodogram(search_result_circ['periodogram'])
+        periodogram = search_result_circ['periodogram']
+        transit_model = search_result_circ['transit_model']
+
+        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, smooth_window)
+        diagnostics.plot_1d_periodogram(periodogram)
 
     # Generate the final peridogram for the full duration range.
     search_result_full = None
@@ -1015,8 +1018,11 @@ def _transit_search(time: np.ndarray,
             duration_circ=duration_circ)
 
     if utils.DEBUG and search_result_full is not None:
-        diagnostics.plot_lightcurve(time, flux, search_result_full['transit_model'], smooth_window)
-        diagnostics.plot_1d_periodogram(search_result_full['periodogram'])
+        periodogram = search_result_full['periodogram']
+        transit_model = search_result_full['transit_model']
+
+        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, smooth_window)
+        diagnostics.plot_1d_periodogram(periodogram)
 
     return search_header, search_result_circ, search_result_full
 
