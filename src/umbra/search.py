@@ -925,9 +925,10 @@ def _transit_search(time: np.ndarray,
         power[imin:imax, jmin:jmax] = result[0]
         dchisq_dec[imin:imax, jmin:jmax] = result[1]
         dchisq_inc[imin:imax, jmin:jmax] = result[2]
-        phase_vals[imin:imax, jmin:jmax] = result[3]
-        depth_vals[imin:imax, jmin:jmax] = result[4]
-        flux_level_vals[imin:imax, jmin:jmax] = result[5]
+        num_points[imin:imax, jmin:jmax] = result[3]
+        phase_vals[imin:imax, jmin:jmax] = result[4]
+        depth_vals[imin:imax, jmin:jmax] = result[5]
+        flux_level_vals[imin:imax, jmin:jmax] = result[6]
 
         (power_circ, edges_circ, model_circ) = result[7]
         (power_full, edges_full, model_full) = result[8]
