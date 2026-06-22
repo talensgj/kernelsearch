@@ -79,7 +79,7 @@ def make_period_groups(period_grid: np.ndarray,
                        duration_grid: np.ndarray,
                        duration_lims: grid.DurationLimits,
                        exp_time: float,
-                       frac_duration_step: float = 1.05,
+                       frac_duration_step: float = 1.095,
                        period_group_sampling: int = 3,
                        epoch_sampling: int = 20,
                        min_epoch_step: float = 1 / utils.MIN_IN_DAY,
@@ -103,7 +103,7 @@ def make_period_groups(period_grid: np.ndarray,
         integrations.
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
-        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+        grid with log-steps of log10(frac_duration_step) (default: 1.095).
     period_group_sampling: int
         The number of duration steps between the longest duration at the start
         of subsequent period groups.
@@ -648,7 +648,7 @@ def _transit_search(time: np.ndarray,
                     max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                     circular_orbits: bool = True,
                     frac_eccentricity: float = 0.90,
-                    frac_duration_step: float = 1.05,
+                    frac_duration_step: float = 1.095,
                     period_group_sampling: int = 3,
                     normalisation: utils.Normalisation = 'umbra',
                     ld_type: utils.LDType = 'linear',
@@ -711,7 +711,7 @@ def _transit_search(time: np.ndarray,
         False (default: 0.90).
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
-        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+        grid with log-steps of log10(frac_duration_step) (default: 1.095).
     period_group_sampling: int
         The number of duration steps between the longest duration at the start
         of subsequent period groups.
@@ -1039,7 +1039,7 @@ class TransitSearch:
                  max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                  circular_orbits: bool = True,
                  frac_eccentricity: float = 0.90,
-                 frac_duration_step: float = 1.05,
+                 frac_duration_step: float = 1.095,
                  period_group_sampling: int = 3,
                  normalisation: utils.Normalisation = 'umbra',
                  num_processes: Optional[int] = None,

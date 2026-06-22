@@ -453,7 +453,7 @@ def get_transit_duration_limits(period_grid: np.ndarray,
 
 def get_transit_duration_grid(min_duration: float,
                               max_duration: float,
-                              frac_duration_step: float = 1.05
+                              frac_duration_step: float = 1.095
                               ) -> np.ndarray:
     """ Compute the duration grid to search.
 
@@ -465,7 +465,7 @@ def get_transit_duration_grid(min_duration: float,
         The maximum transit duration.
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
-        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+        grid with log-steps of log10(frac_duration_step) (default: 1.095).
 
     Returns
     -------
