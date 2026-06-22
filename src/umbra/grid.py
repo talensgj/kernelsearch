@@ -232,7 +232,7 @@ DurationLimits = namedtuple('duration_limits', ['short', 'long'])
 def get_stable_orbits(sm_axis: np.ndarray,
                       min_separation: float = 3.,
                       circular_orbits: bool = False,
-                      frac_eccentricity: float = 0.95
+                      frac_eccentricity: float = 0.90
                       ) -> StableOrbit:
     """ Compute the limiting values for the semi-major axis and eccentricty
         that still result in stable orbits.
@@ -251,7 +251,7 @@ def get_stable_orbits(sm_axis: np.ndarray,
     frac_eccentricity: float
         The fraction of the maximum stable eccentricity to consider, slightly
         limits the size of the duration space searched when circular_orbits =
-        False (default: 0.95).
+        False (default: 0.90).
 
     Returns
     -------
@@ -286,7 +286,7 @@ def get_orbit_bounds(period_grid: np.ndarray,
                      max_stellar_density: float,
                      min_separation: float = 3.,
                      circular_orbits: bool = False,
-                     frac_eccentricity: float = 0.95
+                     frac_eccentricity: float = 0.90
                      ) -> tuple[StableOrbit, StableOrbit]:
     """ Given an array of period values and a stellar density interval, compute
         the bounding semi-major axis and eccentricity values of the inner and
@@ -310,7 +310,7 @@ def get_orbit_bounds(period_grid: np.ndarray,
     frac_eccentricity: float
         The fraction of the maximum stable eccentricity to consider, slightly
         limits the size of the duration space searched when circular_orbits =
-        False (default: 0.95).
+        False (default: 0.90).
 
     Returns
     -------
@@ -348,7 +348,7 @@ def get_transit_duration_limits(period_grid: np.ndarray,
                                 impact_param_bounds: tuple[float, float] = (0.0, 0.9),
                                 min_separation: float = 3.,
                                 circular_orbits: bool = False,
-                                frac_eccentricity: float = 0.95
+                                frac_eccentricity: float = 0.90
                                 ) -> tuple[DurationLimits, StableOrbit, StableOrbit]:
     """ Compute the minimum and maximum transit duration as a function of the
         orbital period, given possible bounds on the stellar density and
@@ -381,7 +381,7 @@ def get_transit_duration_limits(period_grid: np.ndarray,
     frac_eccentricity: float
         The fraction of the maximum stable eccentricity to consider, slightly
         limits the size of the duration space searched when circular_orbits =
-        False (default: 0.95).
+        False (default: 0.90).
 
     Returns
     -------

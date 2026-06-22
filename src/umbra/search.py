@@ -647,7 +647,7 @@ def _transit_search(time: np.ndarray,
                     min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                     max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                     circular_orbits: bool = True,
-                    frac_eccentricity: float = 0.95,
+                    frac_eccentricity: float = 0.90,
                     frac_duration_step: float = 1.05,
                     period_group_sampling: int = 3,
                     normalisation: utils.Normalisation = 'umbra',
@@ -708,7 +708,7 @@ def _transit_search(time: np.ndarray,
     frac_eccentricity: float
         The fraction of the maximum stable eccentricity to consider, slightly
         limits the size of the duration space searched when circular_orbits =
-        False (default: 0.95).
+        False (default: 0.90).
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
         grid with log-steps of log10(frac_duration_step) (default: 1.05).
@@ -1038,7 +1038,7 @@ class TransitSearch:
                  min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                  max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                  circular_orbits: bool = True,
-                 frac_eccentricity: float = 0.95,
+                 frac_eccentricity: float = 0.90,
                  frac_duration_step: float = 1.05,
                  period_group_sampling: int = 3,
                  normalisation: utils.Normalisation = 'umbra',
