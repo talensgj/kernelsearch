@@ -1,6 +1,6 @@
 import numpy as np
 
-from . import grid
+from . import grid, models
 
 import matplotlib.pyplot as plt
 
@@ -98,54 +98,112 @@ def plot_power_at_period(phase_grid, duration_grid, power, depth, num_points, mi
     return
 
 
-def plot_1d_periodogram(periodogram,
-                        duration_circ,
-                        duration_full):
+def plot_quick_look(time,
+                    flux,
+                    periodogram,
+                    transit_model,
+                    smooth_window=None,
+                    figure_file=None):
+    """ Make a diagnostic plot of the periodogram and phase-folded lightcurve.
+    """
+
+    if smooth_window is None:
+        smooth_window = 0
+
+    parameters = transit_model['parameters']
+    phase = models.phase_fold(time, parameters['period'], parameters['midpoint'])
+
+    plt.figure(figsize=(12, 5))
+
+    plt.subplot(211, xscale='log')
+
+    plt.plot(periodogram['periods'], periodogram['power'])
+    plt.axvline(parameters['period'], c='k', zorder=-10)
+
+    xmin = periodogram['periods'][0]
+    xmax = periodogram['periods'][-1]
+
+    plt.xlim(xmin, xmax)
+
+    plt.xlabel('Period [days]')
+    plt.ylabel('Power')
+
+    plt.subplot(212)
+
+    plt.plot(phase, 1e6 * (flux - 1), '.', markersize=5, markeredgecolor='None', alpha=0.5, color='gray', rasterized=True)
+    plt.stairs(1e6 * (transit_model['flux'] - 1), transit_model['phase_edges'], baseline=None, lw=2, color='k', zorder=10)
+    plt.axhline(1e6 * (parameters['flux_level'] - 1), c='k', ls='--', zorder=9)
+
+    dx = parameters['duration']/parameters['period']
+    plt.axvspan(-0.5*dx, 0.5*dx, color='C0', alpha=0.2, zorder=-10)
+
+    dtime = parameters['duration'] + 0.5*smooth_window
+    dx = dtime / parameters['period']
+    dx = np.minimum(dx, 0.5)
+
+    plt.xlim(-dx, dx)
+
+    plt.xlabel('Phase')
+    plt.ylabel(r'$\Delta$Flux [ppm]')
+
+    plt.tight_layout()
+    if figure_file is not None:
+        plt.savefig(figure_file, dpi=180)
+    else:
+        plt.show()
+    plt.close()
+
+    return
+
+
+def plot_1d_periodogram(periodogram):
 
     plt.figure(figsize=(12, 15))
 
-    ax = plt.subplot(611, xscale='log')
+    ax = plt.subplot(711, xscale='log')
 
-    plt.plot(periodogram.periods, periodogram.power)
+    plt.plot(periodogram['periods'], periodogram['power'])
 
     plt.ylabel('Power')
 
-    plt.subplot(612, sharex=ax)
+    plt.subplot(712, sharex=ax)
 
-    plt.plot(periodogram.periods, periodogram.dchisq_dec, label=r'$\Delta\chi^2_{-}$')
-    plt.plot(periodogram.periods, periodogram.dchisq_inc, label=r'$\Delta\chi^2_{+}$')
+    plt.plot(periodogram['periods'], periodogram['dchisq_dec'], label=r'$\Delta\chi^2_{-}$')
+    plt.plot(periodogram['periods'], periodogram['dchisq_inc'], label=r'$\Delta\chi^2_{+}$')
 
     plt.legend()
     plt.ylabel(r'$\Delta\chi^2$')
 
-    plt.subplot(613, sharex=ax)
-    plt.plot(periodogram.periods, np.mod(periodogram.midpoint/periodogram.periods, 1))
+    plt.subplot(713, yscale='log', sharex=ax)
+    plt.plot(periodogram['periods'], periodogram['num_points'])
+
+    plt.ylabel('In-transit Points')
+
+    plt.subplot(714, sharex=ax)
+    plt.plot(periodogram['periods'], np.mod(periodogram['midpoint']/periodogram['periods'], 1))
 
     plt.ylabel('Phase')
 
-    plt.subplot(614, yscale='log', sharex=ax)
+    plt.subplot(715, yscale='log', sharex=ax)
 
-    plt.plot(periodogram.periods, periodogram.duration)
+    plt.plot(periodogram['periods'], periodogram['duration'])
 
-    plt.plot(periodogram.periods, duration_full.short, c='k')
-    plt.plot(periodogram.periods, duration_full.long, c='k')
-
-    plt.plot(periodogram.periods, duration_circ.short, c='k', ls='--')
-    plt.plot(periodogram.periods, duration_circ.long, c='k', ls='--')
+    plt.plot(periodogram['periods'], periodogram['duration_short'], c='k')
+    plt.plot(periodogram['periods'], periodogram['duration_long'], c='k')
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(615, sharex=ax)
+    plt.subplot(716, sharex=ax)
 
-    plt.plot(periodogram.periods, 1e6 * periodogram.depth)
+    plt.plot(periodogram['periods'], 1e6 * periodogram['depth'])
 
     plt.ylabel('Depth [ppm]')
 
-    plt.subplot(616, sharex=ax)
+    plt.subplot(717, sharex=ax)
 
-    plt.plot(periodogram.periods, 1e6 * (periodogram.flux_level - 1))
+    plt.plot(periodogram['periods'], 1e6 * (periodogram['flux_level'] - 1))
 
-    plt.xlim(periodogram.periods[0], periodogram.periods[-1])
+    plt.xlim(periodogram['periods'][0], periodogram['periods'][-1])
 
     plt.ylabel('Flux Level - 1 [ppm]')
 
@@ -161,84 +219,102 @@ def plot_2d_periodogram(period_grid,
                         power,
                         dchisq_dec,
                         dchisq_inc,
+                        num_points,
                         midpoint_vals,
                         depth_vals,
                         flux_level_vals,
                         duration_circ,
-                        duration_full):
+                        duration_full=None):
 
     plt.figure(figsize=(12, 15))
 
-    plt.subplot(611, xscale='log', yscale='log')
+    plt.subplot(711, xscale='log', yscale='log')
 
     plt.title('power')
     plt.pcolormesh(period_grid, duration_grid, power.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(612, xscale='log', yscale='log')
+    plt.subplot(712, xscale='log', yscale='log')
     plt.title('dchisq_dec')
     plt.pcolormesh(period_grid, duration_grid, dchisq_dec.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(613, xscale='log', yscale='log')
+    plt.subplot(713, xscale='log', yscale='log')
     plt.title('dchisq_inc')
     plt.pcolormesh(period_grid, duration_grid, dchisq_inc.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
+
+    plt.subplot(714, xscale='log', yscale='log')
+    plt.title('num_points')
+    plt.pcolormesh(period_grid, duration_grid, num_points.T)
+
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
+
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(614, xscale='log', yscale='log')
+    plt.subplot(715, xscale='log', yscale='log')
     plt.title('phase')
     plt.pcolormesh(period_grid, duration_grid, np.mod(midpoint_vals/period_grid[:, np.newaxis], 1).T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(615, xscale='log', yscale='log')
+    plt.subplot(716, xscale='log', yscale='log')
     plt.title('depth')
     plt.pcolormesh(period_grid, duration_grid, depth_vals.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.ylabel('Duration [days]')
 
-    plt.subplot(616, xscale='log', yscale='log')
+    plt.subplot(717, xscale='log', yscale='log')
     plt.title('flux_level')
     plt.pcolormesh(period_grid, duration_grid, flux_level_vals.T)
 
-    plt.plot(period_grid, duration_full.short, c='k')
-    plt.plot(period_grid, duration_full.long, c='k')
+    plt.plot(period_grid, duration_circ.short, c='C1')
+    plt.plot(period_grid, duration_circ.long, c='C1')
 
-    plt.plot(period_grid, duration_circ.short, c='k', ls='--')
-    plt.plot(period_grid, duration_circ.long, c='k', ls='--')
+    if duration_full is not None:
+        plt.plot(period_grid, duration_full.short, c='C3')
+        plt.plot(period_grid, duration_full.long, c='C3')
 
     plt.xlabel('Period [days]')
     plt.ylabel('Duration [days]')
@@ -298,7 +374,6 @@ def plot_period_groups(period_grid: np.ndarray,
         else:
             plt.axvline(period_grid[imin], c='k')
 
-    plt.xlabel('Period [days]')
     plt.ylabel('Duration [days]')
 
     plt.subplot(212, xscale='log', yscale='log', sharex=ax)

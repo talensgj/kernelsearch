@@ -1,3 +1,4 @@
+import os.path
 import logging
 import multiprocessing as mp
 from typing import Optional, Literal, get_args
@@ -334,3 +335,23 @@ def _verify_num_processes(num_processes: Optional[int]) -> Optional[int]:
         num_processes = max_processes
 
     return num_processes
+
+
+def _verify_output_file(output_file: Optional[str]):
+
+    if output_file is None:
+        return
+
+    path, filename = os.path.split(output_file)
+
+    _, ext = os.path.splitext(filename)
+
+    if ext != '.asdf':
+        msg = f"Output file should be an .asdf file."
+        raise ValueError(msg)
+
+    if path != '' and not os.path.exists(path):
+        msg = f"Path to {output_file} does not exist."
+        raise ValueError(msg)
+
+    return

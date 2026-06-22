@@ -2,9 +2,10 @@ import logging
 from typing import Optional, Literal
 from functools import partial
 from dataclasses import dataclass
-from collections import namedtuple
 from timeit import default_timer as timer
+from importlib.metadata import version
 
+import asdf
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy import signal
@@ -216,7 +217,7 @@ def _search_period(period: np.ndarray,
                    ld_type: utils.LDType,
                    ld_pars: ArrayLike,
                    debug: bool = False
-                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """ Perform the transit search for a single period value.
     """
 
@@ -320,6 +321,7 @@ def _search_period(period: np.ndarray,
     icol = np.argmax(power, axis=1)
     power = power[irow, icol]
     dchisq_dec = dchisq_dec[irow, icol]
+    num_points = num_points[irow, icol]
 
     # Store the parameters corresponding to peak power values.
     phase_grid = (bin_edges[:-ncols] + bin_edges[ncols:])/2
@@ -341,7 +343,7 @@ def _search_period(period: np.ndarray,
     best_model_full = template_models[jmin + arg]
     best_vals_full = (best_power_full, template_edges, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, num_points, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
@@ -351,6 +353,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     power = np.full((nrows, ncols), np.nan)
     dchisq_dec = np.full((nrows, ncols), np.nan)
     dchisq_inc = np.full((nrows, ncols), np.nan)
+    num_points = np.full((nrows, ncols), 0, dtype='uint32')
     phase_vals = np.full((nrows, ncols), np.nan)
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
@@ -371,12 +374,13 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
         power[i] = result[0]
         dchisq_dec[i] = result[1]
         dchisq_inc[i] = result[2]
-        phase_vals[i] = result[3]
-        depth_vals[i] = result[4]
-        flux_level_vals[i] = result[5]
+        num_points[i] = result[3]
+        phase_vals[i] = result[4]
+        depth_vals[i] = result[5]
+        flux_level_vals[i] = result[6]
 
-        (power_circ, edges_circ, model_circ) = result[6]
-        (power_full, edges_full, model_full) = result[7]
+        (power_circ, edges_circ, model_circ) = result[7]
+        (power_full, edges_full, model_full) = result[8]
 
         if power_circ > best_power_circ:
             best_power_circ = power_circ
@@ -391,7 +395,7 @@ def _search_periods(periods, duration_lims_circ, duration_lims_full, **kwargs):
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
+    return power, dchisq_dec, dchisq_inc, num_points, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _search_periods_with_pool(num_processes, periods, duration_lims_circ, duration_lims_full, **kwargs):
@@ -401,6 +405,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     power = np.full((nrows, ncols), np.nan)
     dchisq_dec = np.full((nrows, ncols), np.nan)
     dchisq_inc = np.full((nrows, ncols), np.nan)
+    num_points = np.full((nrows, ncols), 0, dtype='uint32')
     phase_vals = np.full((nrows, ncols), np.nan)
     depth_vals = np.full((nrows, ncols), np.nan)
     flux_level_vals = np.full((nrows, ncols), np.nan)
@@ -431,12 +436,13 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
             power[i::num_processes, :] = result[0]
             dchisq_dec[i::num_processes, :] = result[1]
             dchisq_inc[i::num_processes, :] = result[2]
-            phase_vals[i::num_processes, :] = result[3]
-            depth_vals[i::num_processes, :] = result[4]
-            flux_level_vals[i::num_processes, :] = result[5]
+            num_points[i::num_processes, :] = result[3]
+            phase_vals[i::num_processes, :] = result[4]
+            depth_vals[i::num_processes, :] = result[5]
+            flux_level_vals[i::num_processes, :] = result[6]
 
-            (power_circ, edges_circ, model_circ) = result[6]
-            (power_full, edges_full, model_full) = result[7]
+            (power_circ, edges_circ, model_circ) = result[7]
+            (power_full, edges_full, model_full) = result[8]
 
             if power_circ > best_power_circ:
                 best_power_circ = power_circ
@@ -453,31 +459,7 @@ def _search_periods_with_pool(num_processes, periods, duration_lims_circ, durati
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
 
-    return power, dchisq_dec, dchisq_inc, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
-
-
-SearchResult = namedtuple('lstsq_result',
-                          ['periods',
-                           'period_groups',
-                           'durations',
-                           'duration_lims',
-                           'duration_groups',
-                           'power',
-                           'chisq0',
-                           'dchisq_dec',
-                           'dchisq_inc',
-                           'midpoint',
-                           'duration',
-                           'depth',
-                           'flux_level',
-                           'status_flag',
-                           'best_period',
-                           'best_midpoint',
-                           'best_duration',
-                           'best_depth',
-                           'best_flux_level',
-                           'model_phase',
-                           'model_flux'])
+    return power, dchisq_dec, dchisq_inc, num_points, phase_vals, depth_vals, flux_level_vals, best_vals_circ, best_vals_full
 
 
 def _prepare_lightcurve(time: np.ndarray,
@@ -510,21 +492,24 @@ def _prepare_lightcurve(time: np.ndarray,
     return delta_time, delta_flux_weighted, weights_norm, tstart, flux_mean, weights_sum, chisq0
 
 
-def _1d_periodogram(time: np.ndarray,
+def _1d_periodogram(runtime: float,
                     period_grid: np.ndarray,
                     duration_grid: np.ndarray,
                     period_groups: list[PeriodGroup],
                     power: np.ndarray,
                     chisq0: float,
+                    lc_size: int,
+                    baseline: float,
                     dchisq_dec: np.ndarray,
                     dchisq_inc: np.ndarray,
+                    num_points: np.ndarray,
                     midpoint_vals: np.ndarray,
                     depth_vals: np.ndarray,
                     flux_level_vals: np.ndarray,
                     best_template_vals: tuple,
                     duration_lims: grid.DurationLimits,
                     duration_circ: Optional[grid.DurationLimits] = None
-                    ) -> SearchResult:
+                    ) -> tuple[dict, dict]:
     """ Collapse the 2D periodgram according the the given duration limits.
     """
 
@@ -546,6 +531,7 @@ def _1d_periodogram(time: np.ndarray,
     power = power[irow, icol]
     dchisq_dec = dchisq_dec[irow, icol]
     dchisq_inc = dchisq_inc[irow, icol]
+    num_points = num_points[irow, icol]
     midpoint_vals = midpoint_vals[irow, icol]
     duration_vals = duration_grid[icol]
     depth_vals = depth_vals[irow, icol]
@@ -556,10 +542,17 @@ def _1d_periodogram(time: np.ndarray,
     power = np.where(nanmask, np.nan, power)
     dchisq_dec = np.where(nanmask, np.nan, dchisq_dec)
     dchisq_inc = np.where(nanmask, np.nan, dchisq_inc)
+    num_points = np.where(nanmask, 0, num_points)
     midpoint_vals = np.where(nanmask, np.nan, midpoint_vals)
     duration_vals = np.where(nanmask, np.nan, duration_vals)
     depth_vals = np.where(nanmask, np.nan, depth_vals)
     flux_level_vals = np.where(nanmask, np.nan, flux_level_vals)
+
+    # Compute the number of transits.
+    phase_vals = np.mod(midpoint_vals/period_grid, 1)
+    num_transits = np.zeros_like(period_grid)
+    for i, (phase_, period_, duration_) in enumerate(zip(phase_vals, period_grid, duration_vals)):
+        num_transits[i] = models.get_num_transits(phase_, period_, duration_, baseline)
 
     # Create status flags.
     status_flag = np.zeros_like(duration_vals, dtype='uint8')
@@ -576,38 +569,64 @@ def _1d_periodogram(time: np.ndarray,
     best_flux_level = flux_level_vals[ipeak]
 
     _, template_edges, template_model = best_template_vals
-    model_phase, model_flux = models.evaluate_lstsq_template(time,
-                                                             best_period,
-                                                             best_midpoint,
-                                                             best_depth,
-                                                             best_flux_level,
-                                                             template_edges,
-                                                             template_model)
+    phase_edges, model_flux = models.plot_lstsq_template(best_period,
+                                                         best_depth,
+                                                         best_flux_level,
+                                                         template_edges,
+                                                         template_model)
 
-    # Save the final periodogram.
-    search_result = SearchResult(periods=period_grid,
-                                 period_groups=[group.period_idx for group in period_groups],
-                                 durations=duration_grid,
-                                 duration_lims=duration_lims,
-                                 duration_groups=[group.duration_idx for group in period_groups],
-                                 power=power,
-                                 chisq0=chisq0,
-                                 dchisq_dec=dchisq_dec,
-                                 dchisq_inc=dchisq_inc,
-                                 midpoint=midpoint_vals,
-                                 duration=duration_vals,
-                                 depth=depth_vals,
-                                 flux_level=flux_level_vals,
-                                 status_flag=status_flag,
-                                 best_period=best_period,
-                                 best_midpoint=best_midpoint,
-                                 best_duration=best_duration,
-                                 best_depth=best_depth,
-                                 best_flux_level=best_flux_level,
-                                 model_phase=model_phase,
-                                 model_flux=model_flux)
+    # Save the periodogram header.
+    header = dict()
+    header['runtime'] = runtime
+    header['chisq0'] = chisq0
+    header['lc_size'] = lc_size
+    header['baseline'] = baseline
+    header['periods'] = period_grid
+    header['durations'] = duration_grid
 
-    return search_result
+    groups = dict()
+    groups['period_idx'] = [group.period_idx for group in period_groups]
+    groups['duration_idx'] = [group.duration_idx for group in period_groups]
+    groups['epoch_step'] = [group.epoch_step for group in period_groups]
+    groups['templates'] = [group.search_mode for group in period_groups]
+    header['groups'] = groups
+
+    # Save the periodogram.
+    periodogram = dict()
+    periodogram['periods'] = period_grid
+    periodogram['power'] = power
+    periodogram['dchisq_dec'] = dchisq_dec
+    periodogram['dchisq_inc'] = dchisq_inc
+    periodogram['num_points'] = num_points
+    periodogram['num_transits'] = num_transits
+    periodogram['midpoint'] = midpoint_vals
+    periodogram['duration'] = duration_vals
+    periodogram['depth'] = depth_vals
+    periodogram['flux_level'] = flux_level_vals
+    periodogram['duration_short'] = duration_lims.short
+    periodogram['duration_long'] = duration_lims.long
+    if duration_circ is not None:
+        periodogram['status_flag'] = status_flag
+
+    # Save the best-fit model.
+    parameters = dict()
+    parameters['period'] = best_period
+    parameters['midpoint'] = best_midpoint
+    parameters['duration'] = best_duration
+    parameters['depth'] = best_depth
+    parameters['flux_level'] = best_flux_level
+
+    transit_model = dict()
+    transit_model['phase_edges'] = phase_edges
+    transit_model['flux'] = model_flux
+    transit_model['parameters'] = parameters
+
+    # Create the search_result.
+    search_result = dict()
+    search_result['periodogram'] = periodogram
+    search_result['transit_model'] = transit_model
+
+    return header, search_result
 
 
 def _transit_search(time: np.ndarray,
@@ -639,7 +658,7 @@ def _transit_search(time: np.ndarray,
                     smooth_window: Optional[float] = None,
                     smooth_weights: utils.SmoothWeights = 'uniform',
                     num_processes: Optional[int] = None,
-                    ) -> tuple[SearchResult, SearchResult]:
+                    ) -> tuple[dict, dict, dict]:
     """ Perform a transit search on the provided data.
 
     Parameters
@@ -722,11 +741,14 @@ def _transit_search(time: np.ndarray,
 
     Returns
     -------
-    search_result_circ: SearchResult
-        The periodogram for a search of the circular durations only.
-    search_result_full: SearchResult or None
-        The periodogram for a search of the full (eccentric) duration range,
-        provided only if circular_orbits = False.
+    header: dict
+        The header of the periodogram search.
+    search_result_circ: dict
+        The periodogram and best-fit model for a search of the circular
+        durations only.
+    search_result_full: dict or None
+        The periodogram and best-fit model for a search of the full (eccentric)
+        duration range, provided only if circular_orbits = False.
 
     """
 
@@ -813,6 +835,7 @@ def _transit_search(time: np.ndarray,
     power = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_dec = np.full((nrows, ncols), fill_value=np.nan)
     dchisq_inc = np.full((nrows, ncols), fill_value=np.nan)
+    num_points = np.full((nrows, ncols), fill_value=0, dtype='uint32')
     phase_vals = np.full((nrows, ncols), fill_value=np.nan)
     depth_vals = np.full((nrows, ncols), fill_value=np.nan)
     flux_level_vals = np.full((nrows, ncols), fill_value=np.nan)
@@ -825,7 +848,7 @@ def _transit_search(time: np.ndarray,
     best_edges_full = None
     best_model_full = None
 
-    tottime = 0
+    runtime = 0
     ngroups = len(period_groups)
     for idx, group in enumerate(period_groups):
         start_time = timer()
@@ -902,12 +925,13 @@ def _transit_search(time: np.ndarray,
         power[imin:imax, jmin:jmax] = result[0]
         dchisq_dec[imin:imax, jmin:jmax] = result[1]
         dchisq_inc[imin:imax, jmin:jmax] = result[2]
-        phase_vals[imin:imax, jmin:jmax] = result[3]
-        depth_vals[imin:imax, jmin:jmax] = result[4]
-        flux_level_vals[imin:imax, jmin:jmax] = result[5]
+        num_points[imin:imax, jmin:jmax] = result[3]
+        phase_vals[imin:imax, jmin:jmax] = result[4]
+        depth_vals[imin:imax, jmin:jmax] = result[5]
+        flux_level_vals[imin:imax, jmin:jmax] = result[6]
 
-        (power_circ, edges_circ, model_circ) = result[6]
-        (power_full, edges_full, model_full) = result[7]
+        (power_circ, edges_circ, model_circ) = result[7]
+        (power_full, edges_full, model_full) = result[8]
 
         if power_circ > best_power_circ:
             best_power_circ = power_circ
@@ -919,11 +943,11 @@ def _transit_search(time: np.ndarray,
             best_edges_full = edges_full
             best_model_full = model_full
 
-        runtime = timer() - start_time
-        tottime += runtime
-        LOGDEBUG(f"  Period group searched in {runtime:.1f} seconds.")
+        runtime_ = timer() - start_time
+        runtime += runtime_
+        LOGDEBUG(f"  Period group searched in {runtime_:.1f} seconds.")
 
-    LOGINFO(f"Full search completed in {tottime:.1f} seconds.")
+    LOGINFO(f"Full search completed in {runtime:.1f} seconds.")
 
     best_vals_circ = (best_power_circ, best_edges_circ, best_model_circ)
     best_vals_full = (best_power_full, best_edges_full, best_model_full)
@@ -937,48 +961,69 @@ def _transit_search(time: np.ndarray,
     midpoint_vals = tstart + period_grid[:, np.newaxis]*np.mod(phase_vals, 1)
 
     if utils.DEBUG:
-        diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full)
+        if circular_orbits:
+            duration_full_ = None
+        else:
+            duration_full_ = duration_full
+
+        diagnostics.plot_2d_periodogram(period_grid, duration_grid, power, dchisq_dec, dchisq_inc, num_points, midpoint_vals, depth_vals, flux_level_vals, duration_circ, duration_full_)
 
     # Generate the final periodogram for circular orbits.
-    search_result_circ = _1d_periodogram(time,
-                                         period_grid,
-                                         duration_grid,
-                                         period_groups,
-                                         power,
-                                         chisq0,
-                                         dchisq_dec,
-                                         dchisq_inc,
-                                         midpoint_vals,
-                                         depth_vals,
-                                         flux_level_vals,
-                                         best_vals_circ,
-                                         duration_lims=duration_circ)
+    search_header, search_result_circ = _1d_periodogram(
+        runtime,
+        period_grid,
+        duration_grid,
+        period_groups,
+        power,
+        chisq0,
+        delta_time.size,
+        np.ptp(delta_time),
+        dchisq_dec,
+        dchisq_inc,
+        num_points,
+        midpoint_vals,
+        depth_vals,
+        flux_level_vals,
+        best_vals_circ,
+        duration_lims=duration_circ)
 
     if utils.DEBUG:
-        diagnostics.plot_1d_periodogram(search_result_circ, duration_circ, duration_full)
+        periodogram = search_result_circ['periodogram']
+        transit_model = search_result_circ['transit_model']
+
+        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, smooth_window)
+        diagnostics.plot_1d_periodogram(periodogram)
 
     # Generate the final peridogram for the full duration range.
     search_result_full = None
     if not circular_orbits:
-        search_result_full = _1d_periodogram(time,
-                                             period_grid,
-                                             duration_grid,
-                                             period_groups,
-                                             power,
-                                             chisq0,
-                                             dchisq_dec,
-                                             dchisq_inc,
-                                             midpoint_vals,
-                                             depth_vals,
-                                             flux_level_vals,
-                                             best_vals_full,
-                                             duration_lims=duration_full,
-                                             duration_circ=duration_circ)
+        search_header, search_result_full = _1d_periodogram(
+            runtime,
+            period_grid,
+            duration_grid,
+            period_groups,
+            power,
+            chisq0,
+            delta_time.size,
+            np.ptp(delta_time),
+            dchisq_dec,
+            dchisq_inc,
+            num_points,
+            midpoint_vals,
+            depth_vals,
+            flux_level_vals,
+            best_vals_full,
+            duration_lims=duration_full,
+            duration_circ=duration_circ)
 
     if utils.DEBUG and search_result_full is not None:
-        diagnostics.plot_1d_periodogram(search_result_full, duration_circ, duration_full)
+        periodogram = search_result_full['periodogram']
+        transit_model = search_result_full['transit_model']
 
-    return search_result_circ, search_result_full
+        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, smooth_window)
+        diagnostics.plot_1d_periodogram(periodogram)
+
+    return search_header, search_result_circ, search_result_full
 
 
 class TransitSearch:
@@ -1029,6 +1074,48 @@ class TransitSearch:
 
         return
 
+    def _full_search_result(self,
+                            target_config: dict,
+                            search_header: dict,
+                            search_result_circ: dict,
+                            search_result_full: Optional[dict],
+                            output_file: Optional[str]):
+
+        # Build the global configuration section.
+        global_config = dict()
+        global_config['version'] = version('umbra')
+        global_config['min_transits'] = self.min_transits
+        global_config['min_separation'] = self.min_separation
+        global_config['period_sampling'] = self.period_sampling
+        global_config['min_period'] = self.min_period
+        global_config['max_period'] = self.max_period
+        global_config['epoch_sampling'] = self.epoch_sampling
+        global_config['min_epoch_step'] = self.min_epoch_step
+        global_config['max_epoch_step'] = self.max_epoch_step
+        global_config['circular_orbits'] = self.circular_orbits
+        global_config['frac_eccentricity'] = self.frac_eccentricity
+        global_config['frac_duration_step'] = self.frac_duration_step
+        global_config['period_group_sampling'] = self.period_group_sampling
+        global_config['normalisation'] = self.normalisation
+        global_config['num_processes'] = self.num_processes
+
+        # Build the final file-tree.
+        filetree = dict()
+        filetree['config'] = {'global': global_config,
+                              'target': target_config}
+        filetree['search'] = {'header': search_header,
+                              'circular': search_result_circ}
+        if not self.circular_orbits:
+            filetree['search']['eccentric'] = search_result_full
+
+        # Convert the filtree to an asdf structure.
+        full_result = asdf.AsdfFile(filetree)
+
+        if output_file is not None:
+            full_result.write_to(output_file)
+
+        return full_result
+
     def boxy_lstsq(self,
                    time: np.ndarray,
                    flux: np.ndarray,
@@ -1038,37 +1125,56 @@ class TransitSearch:
                    min_stellar_radius: float,
                    max_stellar_radius: float,
                    min_stellar_mass: float,
-                   max_stellar_mass: float
+                   max_stellar_mass: float,
+                   output_file: Optional[str] = None
                    ):
         """ Perform a BLS-type transit search.
         """
 
-        result = _transit_search(time,
-                                 flux,
-                                 flux_err,
-                                 exp_time,
-                                 exp_cadence,
-                                 min_stellar_radius,
-                                 max_stellar_radius,
-                                 min_stellar_mass,
-                                 max_stellar_mass,
-                                 min_transits=self.min_transits,
-                                 min_separation=self.min_separation,
-                                 period_sampling=self.period_sampling,
-                                 min_period=self.min_period,
-                                 max_period=self.max_period,
-                                 epoch_sampling=self.epoch_sampling,
-                                 min_epoch_step=self.min_epoch_step,
-                                 max_epoch_step=self.max_epoch_step,
-                                 circular_orbits=self.circular_orbits,
-                                 frac_eccentricity=self.frac_eccentricity,
-                                 frac_duration_step=self.frac_duration_step,
-                                 period_group_sampling=self.period_group_sampling,
-                                 normalisation=self.normalisation,
-                                 search_mode="BLS",
-                                 num_processes=self.num_processes)
+        utils._verify_output_file(output_file)
 
-        return result
+        search_header, search_result_circ, search_result_full = _transit_search(
+            time,
+            flux,
+            flux_err,
+            exp_time,
+            exp_cadence,
+            min_stellar_radius,
+            max_stellar_radius,
+            min_stellar_mass,
+            max_stellar_mass,
+            min_transits=self.min_transits,
+            min_separation=self.min_separation,
+            period_sampling=self.period_sampling,
+            min_period=self.min_period,
+            max_period=self.max_period,
+            epoch_sampling=self.epoch_sampling,
+            min_epoch_step=self.min_epoch_step,
+            max_epoch_step=self.max_epoch_step,
+            circular_orbits=self.circular_orbits,
+            frac_eccentricity=self.frac_eccentricity,
+            frac_duration_step=self.frac_duration_step,
+            period_group_sampling=self.period_group_sampling,
+            normalisation=self.normalisation,
+            search_mode="BLS",
+            num_processes=self.num_processes)
+
+        target_config = dict()
+        target_config['templates'] = 'BLS'
+        target_config['exp_time'] = exp_time
+        target_config['exp_cadence'] = exp_cadence
+        target_config['min_stellar_radius'] = min_stellar_radius
+        target_config['max_stellar_radius'] = max_stellar_radius
+        target_config['min_stellar_mass'] = min_stellar_mass
+        target_config['max_stellar_mass'] = max_stellar_mass
+
+        full_result = self._full_search_result(target_config,
+                                               search_header,
+                                               search_result_circ,
+                                               search_result_full,
+                                               output_file)
+
+        return full_result
 
     def transit_lstsq(self,
                       time: np.ndarray,
@@ -1082,38 +1188,59 @@ class TransitSearch:
                       max_stellar_mass: float,
                       ld_type: utils.LDType,
                       ld_pars: ArrayLike,
+                      output_file: Optional[str] = None
                       ):
         """ Perform a TLS-type transit search.
         """
 
-        result = _transit_search(time,
-                                 flux,
-                                 flux_err,
-                                 exp_time,
-                                 exp_cadence,
-                                 min_stellar_radius,
-                                 max_stellar_radius,
-                                 min_stellar_mass,
-                                 max_stellar_mass,
-                                 min_transits=self.min_transits,
-                                 min_separation=self.min_separation,
-                                 period_sampling=self.period_sampling,
-                                 min_period=self.min_period,
-                                 max_period=self.max_period,
-                                 epoch_sampling=self.epoch_sampling,
-                                 min_epoch_step=self.min_epoch_step,
-                                 max_epoch_step=self.max_epoch_step,
-                                 circular_orbits=self.circular_orbits,
-                                 frac_eccentricity=self.frac_eccentricity,
-                                 frac_duration_step=self.frac_duration_step,
-                                 period_group_sampling=self.period_group_sampling,
-                                 normalisation=self.normalisation,
-                                 ld_type=ld_type,
-                                 ld_pars=ld_pars,
-                                 search_mode="TLS",
-                                 num_processes=self.num_processes)
+        utils._verify_output_file(output_file)
 
-        return result
+        search_header, search_result_circ, search_result_full = _transit_search(
+            time,
+            flux,
+            flux_err,
+            exp_time,
+            exp_cadence,
+            min_stellar_radius,
+            max_stellar_radius,
+            min_stellar_mass,
+            max_stellar_mass,
+            min_transits=self.min_transits,
+            min_separation=self.min_separation,
+            period_sampling=self.period_sampling,
+            min_period=self.min_period,
+            max_period=self.max_period,
+            epoch_sampling=self.epoch_sampling,
+            min_epoch_step=self.min_epoch_step,
+            max_epoch_step=self.max_epoch_step,
+            circular_orbits=self.circular_orbits,
+            frac_eccentricity=self.frac_eccentricity,
+            frac_duration_step=self.frac_duration_step,
+            period_group_sampling=self.period_group_sampling,
+            normalisation=self.normalisation,
+            ld_type=ld_type,
+            ld_pars=ld_pars,
+            search_mode="TLS",
+            num_processes=self.num_processes)
+
+        target_config = dict()
+        target_config['templates'] = 'TLS'
+        target_config['exp_time'] = exp_time
+        target_config['exp_cadence'] = exp_cadence
+        target_config['min_stellar_radius'] = min_stellar_radius
+        target_config['max_stellar_radius'] = max_stellar_radius
+        target_config['min_stellar_mass'] = min_stellar_mass
+        target_config['max_stellar_mass'] = max_stellar_mass
+        target_config['ld_type'] = ld_type
+        target_config['ld_pars'] = np.asarray(ld_pars)
+
+        full_result = self._full_search_result(target_config,
+                                               search_header,
+                                               search_result_circ,
+                                               search_result_full,
+                                               output_file)
+
+        return full_result
 
     def warped_lstsq(self,
                      time: np.ndarray,
@@ -1130,41 +1257,65 @@ class TransitSearch:
                      smooth_window: float,
                      smooth_weights: utils.SmoothWeights = 'uniform',
                      short_periods: utils.ShortPeriods = 'skip',
+                     output_file: Optional[str] = None
                      ):
         """ Perform a WLS-type transit search.
         """
 
-        result = _transit_search(time,
-                                 flux,
-                                 flux_err,
-                                 exp_time,
-                                 exp_cadence,
-                                 min_stellar_radius,
-                                 max_stellar_radius,
-                                 min_stellar_mass,
-                                 max_stellar_mass,
-                                 min_transits=self.min_transits,
-                                 min_separation=self.min_separation,
-                                 period_sampling=self.period_sampling,
-                                 min_period=self.min_period,
-                                 max_period=self.max_period,
-                                 epoch_sampling=self.epoch_sampling,
-                                 min_epoch_step=self.min_epoch_step,
-                                 max_epoch_step=self.max_epoch_step,
-                                 circular_orbits=self.circular_orbits,
-                                 frac_eccentricity=self.frac_eccentricity,
-                                 frac_duration_step=self.frac_duration_step,
-                                 period_group_sampling=self.period_group_sampling,
-                                 normalisation=self.normalisation,
-                                 ld_type=ld_type,
-                                 ld_pars=ld_pars,
-                                 search_mode="WLS",
-                                 short_periods=short_periods,
-                                 smooth_window=smooth_window,
-                                 smooth_weights=smooth_weights,
-                                 num_processes=self.num_processes)
+        utils._verify_output_file(output_file)
 
-        return result
+        search_header, search_result_circ, search_result_full = _transit_search(
+            time,
+            flux,
+            flux_err,
+            exp_time,
+            exp_cadence,
+            min_stellar_radius,
+            max_stellar_radius,
+            min_stellar_mass,
+            max_stellar_mass,
+            min_transits=self.min_transits,
+            min_separation=self.min_separation,
+            period_sampling=self.period_sampling,
+            min_period=self.min_period,
+            max_period=self.max_period,
+            epoch_sampling=self.epoch_sampling,
+            min_epoch_step=self.min_epoch_step,
+            max_epoch_step=self.max_epoch_step,
+            circular_orbits=self.circular_orbits,
+            frac_eccentricity=self.frac_eccentricity,
+            frac_duration_step=self.frac_duration_step,
+            period_group_sampling=self.period_group_sampling,
+            normalisation=self.normalisation,
+            ld_type=ld_type,
+            ld_pars=ld_pars,
+            search_mode="WLS",
+            short_periods=short_periods,
+            smooth_window=smooth_window,
+            smooth_weights=smooth_weights,
+            num_processes=self.num_processes)
+
+        target_config = dict()
+        target_config['templates'] = 'WLS'
+        target_config['exp_time'] = exp_time
+        target_config['exp_cadence'] = exp_cadence
+        target_config['min_stellar_radius'] = min_stellar_radius
+        target_config['max_stellar_radius'] = max_stellar_radius
+        target_config['min_stellar_mass'] = min_stellar_mass
+        target_config['max_stellar_mass'] = max_stellar_mass
+        target_config['ld_type'] = ld_type
+        target_config['ld_pars'] = np.asarray(ld_pars)
+        target_config['smooth_window'] = smooth_window
+        target_config['smooth_weights'] = smooth_weights
+        target_config['short_periods'] = short_periods
+
+        full_result = self._full_search_result(target_config,
+                                               search_header,
+                                               search_result_circ,
+                                               search_result_full,
+                                               output_file)
+
+        return full_result
 
 
 def main():
