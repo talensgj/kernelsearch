@@ -1,8 +1,10 @@
 import os.path
 import logging
 import multiprocessing as mp
+from importlib.resources import files
 from typing import Optional, Literal, get_args
 
+import asdf
 import numpy as np
 from numpy.typing import ArrayLike
 from astropy import constants
@@ -355,3 +357,12 @@ def _verify_output_file(output_file: Optional[str]):
         raise ValueError(msg)
 
     return
+
+
+def load_test_data(lc_name):
+
+    data_file = files('umbra.data').joinpath(lc_name)
+
+    af = asdf.open(data_file)
+
+    return af
