@@ -79,12 +79,12 @@ def make_period_groups(period_grid: np.ndarray,
                        duration_grid: np.ndarray,
                        duration_lims: grid.DurationLimits,
                        exp_time: float,
-                       frac_duration_step: float = 1.05,
+                       frac_duration_step: float = 1.095,
                        period_group_sampling: int = 3,
                        epoch_sampling: int = 20,
                        min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                        max_epoch_step: float = 5 / utils.MIN_IN_DAY,
-                       smooth_window: Optional[float] = None
+                       filter_window: Optional[float] = None
                        ) -> list[PeriodGroup]:
     """ Split the full period range into groups to avoid cases
         where the max duration exceeds the min period.
@@ -103,7 +103,7 @@ def make_period_groups(period_grid: np.ndarray,
         integrations.
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
-        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+        grid with log-steps of log10(frac_duration_step) (default: 1.095).
     period_group_sampling: int
         The number of duration steps between the longest duration at the start
         of subsequent period groups.
@@ -114,9 +114,9 @@ def make_period_groups(period_grid: np.ndarray,
         The smallest acceptable epoch step in days (default: 1 minute).
     max_epoch_step: float
         The largest acceptable epoch step in days (default: 5 minutes).
-    smooth_window: float, optional
-        If given the second groups first period is choses so that it contains no
-        cases where the smooth window contain multiple transits.
+    filter_window: float, optional
+        If given the second period groups shortest period is choses so that it
+        contains no cases where the filter window contain multiple transits.
 
     Returns
     -------
@@ -133,18 +133,18 @@ def make_period_groups(period_grid: np.ndarray,
         msg = f"Longest duty cycle > {utils.MAX_DUTY_CYCLE:.2f}, reducing period_group_sampling is recommended."
         LOGWARNING(msg)
 
-    # Identify the shortest period which is guaranteed to have only 1 transit in the smooth window.
+    # Identify the shortest period which is guaranteed to have only 1 transit in the filter window.
     icut = -1
-    if smooth_window is not None:
+    if filter_window is not None:
 
         # Guaranteed baseline if this period is the start of a period group.
         baseline = period_grid - excess_duration_ratio * duration_lims.long - exp_time
 
-        # Index of shortest period with baseline > smooth_window.
-        icut = np.searchsorted(baseline, smooth_window, side='right')
+        # Index of shortest period with baseline > filter_window.
+        icut = np.searchsorted(baseline, filter_window, side='right')
 
         if utils.DEBUG:
-            diagnostics.plot_oot_baseline(period_grid, baseline, smooth_window)
+            diagnostics.plot_oot_baseline(period_grid, baseline, filter_window)
 
     imin = 0
     intervals = []
@@ -156,7 +156,7 @@ def make_period_groups(period_grid: np.ndarray,
 
         # Create a period group break where WLS becomes fast.
         if imax == icut:
-            LOGDEBUG(f"Adding split for smooth window.")
+            LOGDEBUG(f"Adding split for filter window.")
             intervals.append((imin, imax))
             imin = imax
             continue
@@ -210,8 +210,8 @@ def _search_period(period: np.ndarray,
                    templates: Optional[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
                    min_points: np.ndarray,
                    normalisation: utils.Normalisation,
-                   smooth_window: float,
-                   smooth_weights: utils.SmoothWeights,
+                   filter_window: float,
+                   filter_weights: utils.FilterWeights,
                    exp_time: float,
                    exp_cadence: float,
                    ld_type: utils.LDType,
@@ -231,8 +231,8 @@ def _search_period(period: np.ndarray,
                                                ld_type=ld_type,
                                                ld_pars=ld_pars,
                                                search_mode='WLS',
-                                               smooth_window=smooth_window,
-                                               smooth_weights=smooth_weights)
+                                               filter_window=filter_window,
+                                               filter_weights=filter_weights)
 
     # Unpack the transit templates.
     template_edges = templates[0]
@@ -647,16 +647,16 @@ def _transit_search(time: np.ndarray,
                     min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                     max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                     circular_orbits: bool = True,
-                    frac_eccentricity: float = 0.95,
-                    frac_duration_step: float = 1.05,
+                    frac_eccentricity: float = 0.90,
+                    frac_duration_step: float = 1.095,
                     period_group_sampling: int = 3,
                     normalisation: utils.Normalisation = 'umbra',
                     ld_type: utils.LDType = 'linear',
                     ld_pars: ArrayLike = (0.6,),
                     search_mode: utils.SearchMode = 'TLS',
                     short_periods: utils.ShortPeriods = 'skip',
-                    smooth_window: Optional[float] = None,
-                    smooth_weights: utils.SmoothWeights = 'uniform',
+                    filter_window: Optional[float] = None,
+                    filter_weights: utils.FilterWeights = 'uniform',
                     num_processes: Optional[int] = None,
                     ) -> tuple[dict, dict, dict]:
     """ Perform a transit search on the provided data.
@@ -708,10 +708,10 @@ def _transit_search(time: np.ndarray,
     frac_eccentricity: float
         The fraction of the maximum stable eccentricity to consider, slightly
         limits the size of the duration space searched when circular_orbits =
-        False (default: 0.95).
+        False (default: 0.90).
     frac_duration_step: float
         The ratio between consecutive durations in the grid. Equivalent to a
-        grid with log-steps of log10(frac_duration_step) (default: 1.05).
+        grid with log-steps of log10(frac_duration_step) (default: 1.095).
     period_group_sampling: int
         The number of duration steps between the longest duration at the start
         of subsequent period groups.
@@ -729,13 +729,13 @@ def _transit_search(time: np.ndarray,
     short_periods: str
         How to treat short periods when search_mode = 'WLS', can be 'skip',
         'TLS' or 'WLS' (default: 'skip').
-    smooth_window: float or None
-        The smoothing window to use when search_mode = 'WLS', should match any
-        whatever filter was applied to the data (default: None).
-    smooth_weights: str
-        The weights to apply across the smoothing window when search_mode = 'WLS',
-        should match whatever filter was applied to the data and can be 'uniform'
-        or 'tricube' (default: 'uniform').
+    filter_window: float or None
+        The filter window to use when search_mode = 'WLS', should match the
+        lightcurve filter that was applied to the data (default: None).
+    filter_weights: str
+        The weights to apply across the filter window when search_mode = 'WLS',
+        should match the lightcurve filter that was applied to the data and can
+        be 'uniform' or 'tricube' (default: 'uniform').
     num_processes: int or None
         The number of CPUs to use when multi-processing (default: None).
 
@@ -763,7 +763,7 @@ def _transit_search(time: np.ndarray,
     utils._verify_period_group_sampling(period_group_sampling)
     utils._verify_normalisation(normalisation)
     ld_pars = utils._verify_ld_params(ld_type, ld_pars)
-    smooth_window = utils._verify_lstsq_params(search_mode, smooth_window, smooth_weights, short_periods)
+    filter_window = utils._verify_lstsq_params(search_mode, filter_window, filter_weights, short_periods)
     num_processes = utils._verify_num_processes(num_processes)
 
     # Pre-compute some arrays from the lightcurves.
@@ -825,7 +825,7 @@ def _transit_search(time: np.ndarray,
                                        epoch_sampling=epoch_sampling,
                                        min_epoch_step=min_epoch_step,
                                        max_epoch_step=max_epoch_step,
-                                       smooth_window=smooth_window)
+                                       filter_window=filter_window)
 
     # Set up variables for the output.
     nrows = period_grid.size
@@ -867,7 +867,7 @@ def _transit_search(time: np.ndarray,
 
         is_short_period = False
         baseline = np.amin(period_group) - np.amax(duration_group) - exp_time
-        if search_mode == 'WLS' and baseline < smooth_window:
+        if search_mode == 'WLS' and baseline < filter_window:
             group.search_mode = short_periods
             if short_periods == 'skip':
                 LOGDEBUG("  Skipping short periods in WLS search.")
@@ -894,8 +894,8 @@ def _transit_search(time: np.ndarray,
                                                    ld_type=ld_type,
                                                    ld_pars=ld_pars,
                                                    search_mode=group.search_mode,
-                                                   smooth_window=smooth_window,
-                                                   smooth_weights=smooth_weights)
+                                                   filter_window=filter_window,
+                                                   filter_weights=filter_weights)
         else:
             templates = None
 
@@ -910,8 +910,8 @@ def _transit_search(time: np.ndarray,
         kwargs['templates'] = templates
         kwargs['min_points'] = 0.5*duration_group/exp_cadence
         kwargs['normalisation'] = normalisation
-        kwargs['smooth_window'] = smooth_window
-        kwargs['smooth_weights'] = smooth_weights
+        kwargs['filter_window'] = filter_window
+        kwargs['filter_weights'] = filter_weights
         kwargs['exp_time'] = exp_time
         kwargs['exp_cadence'] = exp_cadence
         kwargs['ld_type'] = ld_type
@@ -991,7 +991,7 @@ def _transit_search(time: np.ndarray,
         periodogram = search_result_circ['periodogram']
         transit_model = search_result_circ['transit_model']
 
-        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, smooth_window)
+        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, filter_window)
         diagnostics.plot_1d_periodogram(periodogram)
 
     # Generate the final peridogram for the full duration range.
@@ -1020,7 +1020,7 @@ def _transit_search(time: np.ndarray,
         periodogram = search_result_full['periodogram']
         transit_model = search_result_full['transit_model']
 
-        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, smooth_window)
+        diagnostics.plot_quick_look(time, flux, periodogram, transit_model, filter_window)
         diagnostics.plot_1d_periodogram(periodogram)
 
     return search_header, search_result_circ, search_result_full
@@ -1038,8 +1038,8 @@ class TransitSearch:
                  min_epoch_step: float = 1 / utils.MIN_IN_DAY,
                  max_epoch_step: float = 5 / utils.MIN_IN_DAY,
                  circular_orbits: bool = True,
-                 frac_eccentricity: float = 0.95,
-                 frac_duration_step: float = 1.05,
+                 frac_eccentricity: float = 0.90,
+                 frac_duration_step: float = 1.095,
                  period_group_sampling: int = 3,
                  normalisation: utils.Normalisation = 'umbra',
                  num_processes: Optional[int] = None,
@@ -1254,8 +1254,8 @@ class TransitSearch:
                      max_stellar_mass: float,
                      ld_type: utils.LDType,
                      ld_pars: ArrayLike,
-                     smooth_window: float,
-                     smooth_weights: utils.SmoothWeights = 'uniform',
+                     filter_window: float,
+                     filter_weights: utils.FilterWeights = 'uniform',
                      short_periods: utils.ShortPeriods = 'skip',
                      output_file: Optional[str] = None
                      ):
@@ -1291,8 +1291,8 @@ class TransitSearch:
             ld_pars=ld_pars,
             search_mode="WLS",
             short_periods=short_periods,
-            smooth_window=smooth_window,
-            smooth_weights=smooth_weights,
+            filter_window=filter_window,
+            filter_weights=filter_weights,
             num_processes=self.num_processes)
 
         target_config = dict()
@@ -1305,8 +1305,8 @@ class TransitSearch:
         target_config['max_stellar_mass'] = max_stellar_mass
         target_config['ld_type'] = ld_type
         target_config['ld_pars'] = np.asarray(ld_pars)
-        target_config['smooth_window'] = smooth_window
-        target_config['smooth_weights'] = smooth_weights
+        target_config['filter_window'] = filter_window
+        target_config['filter_weights'] = filter_weights
         target_config['short_periods'] = short_periods
 
         full_result = self._full_search_result(target_config,

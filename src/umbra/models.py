@@ -1,5 +1,5 @@
 import logging
-from typing import Union, Optional, get_args
+from typing import Union, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -409,8 +409,8 @@ def analytic_transit_model(time: np.ndarray,
 
 def _warped_lstsq_init(mid_times: np.ndarray,
                        exp_cadence: float,
-                       smooth_window: float,
-                       smooth_weights: utils.SmoothWeights
+                       filter_window: float,
+                       filter_weights: utils.FilterWeights
                        ) -> tuple[np.ndarray, np.ndarray]:
     """ Prepare the special time and weights arrays for computing WLS templates.
 
@@ -420,11 +420,11 @@ def _warped_lstsq_init(mid_times: np.ndarray,
         The times at which to evaluate the transit model.
     exp_cadence: float
         The exposure cadence of the observations in days.
-    smooth_window: float
-        The smoothing window to use when generating WLS templates, should match
+    filter_window: float
+        The filter window to use when generating WLS templates, should match
         whatever filter was applied to the data.
-    smooth_weights: str
-        The weights to apply across the smoothing window when generating WLS
+    filter_weights: str
+        The weights to apply across the filter window when generating WLS
         templates, should match whatever filter was applied to the data.
 
     Returns
@@ -437,20 +437,20 @@ def _warped_lstsq_init(mid_times: np.ndarray,
 
     """
 
-    # Create the grid of exposures inside the smoothing window.
-    nevals = np.ceil(smooth_window / exp_cadence).astype('int')
+    # Create the grid of exposures inside the filter window.
+    nevals = np.ceil(filter_window / exp_cadence).astype('int')
     if nevals % 2 == 0:
         nevals += 1
 
     mid_idx = nevals // 2
     dt = (np.arange(nevals) - mid_idx) * exp_cadence
 
-    # Compute the weights across the smoothing window.
-    if smooth_weights == 'uniform':
+    # Compute the weights across the filter window.
+    if filter_weights == 'uniform':
         weights = np.ones_like(dt)
 
-    if smooth_weights == 'tricube':
-        radius = smooth_window / 2
+    if filter_weights == 'tricube':
+        radius = filter_window / 2
         weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt / radius) ** 3) ** 3, 0)
 
     # Normalise the weights.
@@ -471,8 +471,8 @@ def _lstsq_templates(mid_times: np.ndarray,
                      ld_pars: ArrayLike,
                      exp_time: float,
                      exp_cadence: float,
-                     smooth_window: Optional[float],
-                     smooth_weights: utils.SmoothWeights
+                     filter_window: Optional[float],
+                     filter_weights: utils.FilterWeights
                      ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """ Compute the transit shapes needed to generate the least-squares templates.
 
@@ -496,18 +496,18 @@ def _lstsq_templates(mid_times: np.ndarray,
         The exposure time of the observations in days.
     exp_cadence: float
         The exposure cadence of the observations in days.
-    smooth_window: float or None
-        The smoothing window to use when generating WLS templates, should match
+    filter_window: float or None
+        The filter window to use when generating WLS templates, should match
         whatever filter was applied to the data.
-    smooth_weights: str
-        The weights to apply across the smoothing window when generating WLS
+    filter_weights: str
+        The weights to apply across the filter window when generating WLS
         templates, should match whatever filter was applied to the data.
 
     """
 
     # Generate the time and weights arrays for WLS.
-    if smooth_window is not None:
-        result = _warped_lstsq_init(mid_times, exp_cadence, smooth_window, smooth_weights)
+    if filter_window is not None:
+        result = _warped_lstsq_init(mid_times, exp_cadence, filter_window, filter_weights)
         wls_times, wls_weights = result
 
         # Need 1D time array for batman.
@@ -554,7 +554,7 @@ def _lstsq_templates(mid_times: np.ndarray,
         fac = result[5]  # Save fac for WLS templates.
         tls_template[row_idx] = result[0]
 
-        if smooth_window is not None:
+        if filter_window is not None:
             # Evaluate the transit model.
             result = analytic_transit_model(wls_times,
                                             transit_params,
@@ -582,8 +582,8 @@ def get_lstsq_templates(periods: np.ndarray,
                         ref_depth: float = 5000,
                         ref_impact: float = 0.,
                         search_mode: utils.SearchMode = 'TLS',
-                        smooth_window: Optional[float] = None,
-                        smooth_weights: utils.SmoothWeights = 'uniform'
+                        filter_window: Optional[float] = None,
+                        filter_weights: utils.FilterWeights = 'uniform'
                         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """ Get the least-squares transit templates for the chosen search mode.
 
@@ -612,11 +612,11 @@ def get_lstsq_templates(periods: np.ndarray,
     search_mode: str
         The type of transit templates to use, can be 'BLS', 'TLS' or 'WLS'
         (default: 'TLS').
-    smooth_window: float or None
-        The smoothing window to use when search_mode = 'WLS', should match any
+    filter_window: float or None
+        The filter window to use when search_mode = 'WLS', should match any
         whatever filter was applied to the data (default: None).
-    smooth_weights: str
-        The weights to apply across the smoothing window when search_mode = 'WLS',
+    filter_weights: str
+        The weights to apply across the filter window when search_mode = 'WLS',
         should match whatever filter was applied to the data and can be 'uniform'
         or 'tricube' (default: 'uniform').
 
@@ -636,7 +636,7 @@ def get_lstsq_templates(periods: np.ndarray,
 
     utils._verify_observation_params(exp_time, exp_cadence)
     ld_pars = utils._verify_ld_params(ld_type, ld_pars)
-    smooth_window = utils._verify_lstsq_params(search_mode, smooth_window, smooth_weights, 'TLS')
+    filter_window = utils._verify_lstsq_params(search_mode, filter_window, filter_weights, 'TLS')
 
     # Convert depth from ppm to fraction.
     ref_depth = 1e-6 * ref_depth
@@ -648,15 +648,15 @@ def get_lstsq_templates(periods: np.ndarray,
 
     # Check the baseline.
     baseline = min_period - max_duration - exp_time
-    if search_mode == 'WLS' and periods.size > 1 and baseline < smooth_window:
+    if search_mode == 'WLS' and periods.size > 1 and baseline < filter_window:
         LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
         search_mode: utils.SearchMode = 'TLS'
 
-    # Compute the duration of the signal, accounting for exp_time and smooth_window.
+    # Compute the duration of the signal, accounting for exp_time and filter_window.
     if search_mode in ['BLS', 'TLS']:
         delta_time = max_duration + exp_time
     else:
-        delta_time = max_duration + exp_time + smooth_window
+        delta_time = max_duration + exp_time + filter_window
 
     if periods.size == 1:
         delta_time = np.minimum(delta_time, max_period)
@@ -688,8 +688,8 @@ def get_lstsq_templates(periods: np.ndarray,
                               ld_pars,
                               exp_time,
                               exp_cadence,
-                              smooth_window,
-                              smooth_weights)
+                              filter_window,
+                              filter_weights)
     bls_template, tls_template, wls_template = result
 
     # Choose the final template based on the search mode.
