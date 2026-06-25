@@ -10,12 +10,13 @@ authors = [
     ]
 description = "A transit search algorithm."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     ]
+
 dependencies = [
     "asdf",
     "numpy",
@@ -25,3 +26,9 @@ dependencies = [
     "batman-package",
     "matplotlib",
     ]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]

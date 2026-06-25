@@ -137,7 +137,7 @@ def plot_quick_look(time,
     dx = parameters['duration']/parameters['period']
     plt.axvspan(-0.5*dx, 0.5*dx, color='C0', alpha=0.2, zorder=-10)
 
-    dtime = parameters['duration'] + 0.5*filter_window
+    dtime = 1.5*parameters['duration'] + 0.5*filter_window
     dx = dtime / parameters['period']
     dx = np.minimum(dx, 0.5)
 
