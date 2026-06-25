@@ -102,13 +102,13 @@ def plot_quick_look(time,
                     flux,
                     periodogram,
                     transit_model,
-                    smooth_window=None,
+                    filter_window=None,
                     figure_file=None):
     """ Make a diagnostic plot of the periodogram and phase-folded lightcurve.
     """
 
-    if smooth_window is None:
-        smooth_window = 0
+    if filter_window is None:
+        filter_window = 0
 
     parameters = transit_model['parameters']
     phase = models.phase_fold(time, parameters['period'], parameters['midpoint'])
@@ -137,7 +137,7 @@ def plot_quick_look(time,
     dx = parameters['duration']/parameters['period']
     plt.axvspan(-0.5*dx, 0.5*dx, color='C0', alpha=0.2, zorder=-10)
 
-    dtime = parameters['duration'] + 0.5*smooth_window
+    dtime = parameters['duration'] + 0.5*filter_window
     dx = dtime / parameters['period']
     dx = np.minimum(dx, 0.5)
 
@@ -328,7 +328,7 @@ def plot_2d_periodogram(period_grid,
 
 def plot_oot_baseline(period_grid: np.ndarray,
                       baseline: np.ndarray,
-                      smooth_window: float):
+                      filter_window: float):
     """ Make a figure showing the OoT baseline.
     """
 
@@ -338,10 +338,10 @@ def plot_oot_baseline(period_grid: np.ndarray,
 
     plt.plot(period_grid, baseline)
 
-    plt.axhline(smooth_window, c='k')
+    plt.axhline(filter_window, c='k')
 
-    plt.xlim(period_grid[0], 2 * smooth_window)
-    plt.ylim(0, 2 * smooth_window)
+    plt.xlim(period_grid[0], 2 * filter_window)
+    plt.ylim(0, 2 * filter_window)
 
     plt.xlabel('Period [days]')
     plt.ylabel('OoT Baseline [days]')

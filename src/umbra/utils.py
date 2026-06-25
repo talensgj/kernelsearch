@@ -48,7 +48,7 @@ LDType = Literal["uniform", "linear", "quadratic", "square-root", "logarithmic",
 BinMethod = Literal["points", "window"]
 SearchMode = Literal["BLS", "TLS", "WLS"]
 ShortPeriods = Literal["skip", "TLS", "WLS"]
-SmoothWeights = Literal["uniform", "tricube"]
+FilterWeights = Literal["uniform", "tricube"]
 Normalisation = Literal["simple", "umbra"]
 
 
@@ -260,8 +260,8 @@ def _verify_frac_duration_step(frac_duration_step: float):
 
 
 def _verify_lstsq_params(search_mode: SearchMode,
-                         smooth_window: Optional[float],
-                         smooth_weights: SmoothWeights,
+                         filter_window: Optional[float],
+                         filter_weights: FilterWeights,
                          short_periods: ShortPeriods
                          ) -> Optional[float]:
 
@@ -271,29 +271,29 @@ def _verify_lstsq_params(search_mode: SearchMode,
 
     if search_mode in ["BLS", "TLS"]:
 
-        if smooth_window is not None:
-            LOGWARNING(f"Performing {search_mode} search, setting smooth_window to None.")
-            smooth_window = None
+        if filter_window is not None:
+            LOGWARNING(f"Performing {search_mode} search, setting filter_window to None.")
+            filter_window = None
 
-        return smooth_window
+        return filter_window
 
-    if smooth_window is None:
-        msg = f"Parameter smooth_window cannot be None for 'WLS' search."
+    if filter_window is None:
+        msg = f"Parameter filter_window cannot be None for 'WLS' search."
         raise ValueError(msg)
 
-    if not (smooth_window > 0):
-        msg = f"Parameter smooth_window must be greater than zero."
+    if not (filter_window > 0):
+        msg = f"Parameter filter_window must be greater than zero."
         raise ValueError(msg)
 
-    if smooth_weights not in get_args(SmoothWeights):
-        msg = f"Invalid value '{smooth_weights}' for parameter smooth_weights."
+    if filter_weights not in get_args(FilterWeights):
+        msg = f"Invalid value '{filter_weights}' for parameter filter_weights."
         raise ValueError(msg)
 
     if short_periods not in get_args(ShortPeriods):
         msg = f"Invalid value '{short_periods}' for parameter short_periods."
         raise ValueError(msg)
 
-    return smooth_window
+    return filter_window
 
 
 def _verify_period_group_sampling(period_group_sampling: int):
