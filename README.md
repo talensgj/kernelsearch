@@ -11,15 +11,19 @@ templates, improving recovery rates for some filters.
 A basic usage example is provided in the examples/simple-example.ipynb
 
 # Change log
-- v1.0.0 (upcoming) This release including major implementation updates and improvements to the user experience. It is recommended to wait for this version.
-    - Major re-factoring, improvements to documentation, and input verification. 
+- v1.1.0 (upcoming) This release will focus on documentation.
+  - Add documentation.
+  - Add further example notebooks.
+- v1.0.0 (2026-06-26) We recommened not using older versions.
+    - Major re-factoring to improve user friendliness.
+    - Added input verification. 
+    - Added optional asdf output file.
     - Implementation of [Ofir (2014)](https://ui.adsabs.harvard.edu/abs/2014A%26A...561A.138O/abstract) period grid.
     - Implementation of [Talens et al. (2024)](https://ui.adsabs.harvard.edu/abs/2025RNAAS...9..319T/abstract) duration limits.
     - Option to search the full eccentric duration range.
     - Simplified duration grid to use the same log-spaced durations at all periods.
     - Clarified epoch sampling.
-    - Added further example notebooks.
-- v0.7.1 (2025-03-27) More user-friendly version published alongside Talens et al. (in prep). Can be used by the interested user.
+- v0.7.1 (2026-03-27)
     - Minor changes and fixes.
     - Renamed the code and repo to umbra.
     - Added a simple example notebook.

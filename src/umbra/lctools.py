@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, get_args
 
 import numpy as np
 from scipy import signal, interpolate
@@ -6,16 +6,103 @@ from scipy import signal, interpolate
 import wotan
 import wotan.gaps
 
+from . import utils
+
 import matplotlib.pyplot as plt
 
 
-def get_wotan_kwargs(method: str) -> dict:
+def bin_lightcurve(time: np.ndarray,
+                   flux: np.ndarray,
+                   flux_err: np.ndarray,
+                   bin_size: float = 12,
+                   bin_method: utils.BinMethod = "points",
+                   min_points: int = 1
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """ Re-bin lightcurve.
 
-    wotan_kwargs = dict()
-    wotan_kwargs['edge_cutoff'] = 0.  # Don't discard data.
-    wotan_kwargs['break_tolerance'] = 0.5  # Treat quarters individually.
+    Parameters
+    ----------
+    time: np.ndarray
+        The times of the observations.
+    flux: np.ndarray
+        The flux values of the observations.
+    flux_err: np.ndarray
+        The flux uncertainties of the observations.
+    bin_size: float or int
+        Either the number of points ber bin or the width of the bins in the
+        same units as time (deafult: 12).
+    bin_method: str
+        Either "points" to place a fixed number of points in a bin, or "window"
+        to use bins with a fixed width (default: 'points').
+    min_points: int
+        The minimum number of points per bin, bins with fewer points are removed
+        from the output (default: 1).
 
-    if method == 'biweight':
+    """
+
+    # Check the bin_method is valid.
+    if bin_method not in get_args(utils.BinMethod):
+        raise ValueError(f"Unknown binning method: {bin_method}.")
+
+    # Check min_points is valid.
+    if min_points < 1:
+        raise ValueError(f"Parameter min_points must be >= 1.")
+
+    # Assign observations to the right bins.
+    bin_idx = None
+    if bin_method == "points":
+        bin_idx = np.arange(len(time)) // bin_size
+    if bin_method == "window":
+        nbins = np.ceil(np.ptp(time)/bin_size).astype('int')
+        bin_edges = np.amin(time) + bin_size*np.arange(nbins + 1)
+        bin_idx = np.searchsorted(bin_edges, time, side="right")
+
+    # Compute intermediate arrays.
+    weights = 1/flux_err**2
+    num_points = np.bincount(bin_idx)
+    time_sum = np.bincount(bin_idx, weights=time)
+    weights_sum = np.bincount(bin_idx, weights=weights)
+    weights_flux_sum = np.bincount(bin_idx, weights=weights*flux)
+
+    # Remove bins containing too few points.
+    mask = num_points >= min_points
+    num_points = num_points[mask]
+    time_sum = time_sum[mask]
+    weights_sum = weights_sum[mask]
+    weights_flux_sum = weights_flux_sum[mask]
+
+    # Compute the binned lightcurve.
+    bin_time = time_sum/num_points
+    bin_flux = weights_flux_sum/weights_sum
+    bin_flux_err = np.sqrt(1/weights_sum)
+
+    return bin_time, bin_flux, bin_flux_err, num_points
+
+
+def get_wotan_kwargs(method: str, wotan_kwargs: Optional[dict] = None) -> dict:
+
+    if wotan_kwargs is None:
+        wotan_kwargs = dict()
+
+    if 'method' in wotan_kwargs:
+        msg = f"Can't pass 'method' through wotan_kwargs, use method parameter instead."
+        raise ValueError(msg)
+
+    if 'window_length' in wotan_kwargs:
+        msg = f"Can't pass 'window_length' through wotan_kwargs, use window_length parameter instead."
+        raise ValueError(msg)
+
+    if 'return_trend' in wotan_kwargs:
+        msg = f"Can't pass 'return_trend' through wotan_kwargs."
+        raise ValueError(msg)
+
+    if 'edge_cutoff' not in wotan_kwargs:
+        wotan_kwargs['edge_cutoff'] = 0.  # Don't discard data.
+
+    if 'break_tolerance' not in wotan_kwargs:
+        wotan_kwargs['break_tolerance'] = 0.5  # Treat quarters individually.
+
+    if method == 'biweight' and 'cval' not in wotan_kwargs:
         wotan_kwargs['cval'] = 5
 
     return wotan_kwargs
@@ -25,7 +112,8 @@ def filter_wotan(time: np.ndarray,
                  flux: np.ndarray,
                  flux_err: np.ndarray,
                  method: str,
-                 window_length: float
+                 window_length: float,
+                 wotan_kwargs: Optional[dict] = None
                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """ Filter a lightcurve using wotan.
 
@@ -41,6 +129,9 @@ def filter_wotan(time: np.ndarray,
         The filtering method to use.
     window_length: float
         The size of the smoothing window used with wotan, must have the same units as time.
+    wotan_kwargs: dict or None
+        Additional arguments to pass to wotan.flatten, except method,
+        window_length and return_trend.
 
     Returns
     -------
@@ -55,7 +146,7 @@ def filter_wotan(time: np.ndarray,
 
     """
 
-    wotan_kwargs = get_wotan_kwargs(method)
+    wotan_kwargs = get_wotan_kwargs(method, wotan_kwargs)
 
     # Run the detrending.
     flux_detrend, trend = wotan.flatten(time,
@@ -220,6 +311,7 @@ def filter_ysd_lowess(time: np.ndarray,
                       flux_err: np.ndarray,
                       window_length: float,
                       cadence: float,
+                      break_tolerance: float = 0.5,
                       window_smooth: Optional[float] = None,
                       gap_size: float = 0.2,
                       min_width: float = 7.5 / 24,
@@ -241,6 +333,9 @@ def filter_ysd_lowess(time: np.ndarray,
         The size of the smoothing window used with wotan, same units as time.
     cadence: float
         Cadence of the observations, same units as time.
+    break_tolerance: float
+        The break tolerance to use when splitting the lighcurve into sections
+        initially.
     window_smooth: float or None
         The window size to use for smoothing the lightcurve prior to peak/through detection.
         If not given taken to be the same as window_length.
@@ -276,8 +371,7 @@ def filter_ysd_lowess(time: np.ndarray,
     max_width = np.ceil(max_width / cadence)
 
     # Get the indexes of the gaps.
-    wotan_kwargs = get_wotan_kwargs('ysd-lowess')
-    gaps_indexes = wotan.gaps.get_gaps_indexes(time, break_tolerance=wotan_kwargs['break_tolerance'])
+    gaps_indexes = wotan.gaps.get_gaps_indexes(time, break_tolerance)
 
     # Iterate over all segments.
     mask = np.ones_like(flux, dtype='bool')

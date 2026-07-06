@@ -1,179 +1,307 @@
-from typing import Optional
+import logging
+from typing import Union, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 import batman
-from astropy import constants, units
 
-RNG = np.random.default_rng(5627323756)
-DEG2RAD = np.pi / 180
-RAD2DEG = 180 / np.pi
+from . import utils
+
+#############
+#  LOGGING  #
+#############
+
+logger = logging.getLogger(__name__)
+
+LOGDEBUG = logger.debug
+LOGINFO = logger.info
+LOGWARNING = logger.warning
+LOGERROR = logger.error
+LOGEXCEPTION = logger.exception
 
 
-def impact2inc(b, a, ecc, w):
-    """ Convert the impact parameter to orbital inclination.
+def get_num_transits(phase: Union[float, np.ndarray],
+                     period: float,
+                     duration: Union[float, np.ndarray],
+                     baseline: float,
+                     brute_force: bool = False):
+    """ Compute the exact number of transits seen in a particular baseline.
+
     """
 
-    factor = a * (1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
-    inc = np.arccos(b / factor) * RAD2DEG
+    # Handle both scalars and array as input for phase and duration.
+    phase_grid = np.asarray(phase)
+    duration_grid = np.asarray(duration)
 
-    return inc
+    if phase_grid.ndim == 0:
+        phase_grid = phase_grid.reshape((1,))
+
+    if duration_grid.ndim == 0:
+        duration_grid = duration_grid.reshape((1,))
+
+    # Ensure phases are in the range [0, 1).
+    phase_grid = np.mod(phase_grid, 1)
+
+    # Compute the available space in the baseline and the maximum number of transits.
+    num_folds = baseline/period
+    max_transits = np.floor(num_folds + 1).astype('int')
+
+    # Check only transit that can be partially out of view.
+    # That is np.arange(-1, max_transits) the first 2 and last 2 values.
+    transit_idx = np.arange(-1, max_transits)
+
+    if max_transits > 3 and not brute_force:
+        transit_idx = np.array([-1, 0, max_transits - 2, max_transits - 1])
+
+    # Start and end phases of these transits.
+    phase_0 = phase_grid[np.newaxis, :, np.newaxis] + transit_idx[np.newaxis, np.newaxis, :] - duration_grid[:, np.newaxis, np.newaxis]/period/2
+    phase_1 = phase_grid[np.newaxis, :, np.newaxis] + transit_idx[np.newaxis, np.newaxis, :] + duration_grid[:, np.newaxis, np.newaxis]/period/2
+
+    # Clip based on the basline.
+    phase_0 = np.clip(phase_0, 0, num_folds)
+    phase_1 = np.clip(phase_1, 0, num_folds)
+
+    # Compute the number of transits.
+    offset = max_transits - len(transit_idx) + 1  # Number of transits not explitly checked.
+    num_transits = offset + np.sum(phase_1 - phase_0, axis=2)*period/duration_grid[:, np.newaxis]
+
+    # Remove excess dimensions.
+    num_transits = np.squeeze(num_transits)
+
+    return num_transits
 
 
-def inc2impact(inc, a, ecc, w):
-    """ Convert orbital inclination to the impact parameter.
+def _ecc_factors(eccentricity: Union[float, np.ndarray],
+                 arg_periastron: Union[float, np.ndarray]
+                 ) -> tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
+    """ Compute 2 eccentricity terms that appear in other equations.
     """
 
-    factor = a * (1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
-    impact = factor * np.cos(inc * DEG2RAD)
+    arg_periastron = np.deg2rad(arg_periastron)
 
-    return impact
+    x = 1 - eccentricity ** 2
+    y = 1 + eccentricity * np.sin(arg_periastron)
+
+    alpha = np.sqrt(x) / y
+    beta = x / y
+
+    return alpha, beta
 
 
-def axis2duration(a, per, p, b, ecc, w):
-    """ Convert the scaled semi-major axis to transit duration.
+def get_orbital_inclination(impact_param: Union[float, np.ndarray],
+                            sm_axis: Union[float, np.ndarray],
+                            eccentricity: Union[float, np.ndarray],
+                            arg_periastron: Union[float, np.ndarray]
+                            ) -> Union[float, np.ndarray]:
+    """ Compute the orbital inclination (i) for an eccentric orbit, using
+        Equation 7 from Winn (2010).
+
+    Parameters
+    ----------
+    impact_param: float or np.ndarray
+        The impact parameter value(s).
+    sm_axis: float or np.ndarray
+        The semi-major axis value(s) in stellar radii.
+    eccentricity: float or np.ndarray
+        The orbital eccentricty value(s).
+    arg_periastron: float or np.ndarray
+        The argument of periastron in degrees.
+
+    Returns
+    -------
+    inclination: float or np.ndarray
+        The orbital inclination in degrees.
+
     """
 
-    # Duration in the case of a circular orbit.
-    sin_sq = ((1 + p) ** 2 - b ** 2) / (a ** 2 - b ** 2)
-    transit_duration = per / np.pi * np.arcsin(np.sqrt(sin_sq))
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    inclination = np.arccos(impact_param / (sm_axis * beta))
+    inclination = np.rad2deg(inclination)
 
-    # Eccentricity correction (for transits).
-    transit_duration = transit_duration * np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
+    return inclination
+
+
+def get_impact_parameter(inclination: Union[float, np.ndarray],
+                         sm_axis: Union[float, np.ndarray],
+                         eccentricity: Union[float, np.ndarray],
+                         arg_periastron: Union[float, np.ndarray]
+                         ) -> Union[float, np.ndarray]:
+    """ Compute the impact parameter (b) for an eccentric orbit, using
+        Equation 7 from Winn (2010).
+
+    Parameters
+    ----------
+    inclination: float or np.ndarray
+        The orbital inclination values(s) in degrees.
+    sm_axis: float or np.ndarray
+        The semi-major axis value(s) in stellar radii.
+    eccentricity: float or np.ndarray
+        The orbital eccentricty value(s).
+    arg_periastron: float or np.ndarray
+        The argument of periastron values(s) in degrees.
+
+    Returns
+    -------
+    impact_param: float or np.ndarray
+        The impact parameter value(s).
+
+    """
+
+    inclination = np.deg2rad(inclination)
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    impact_param = sm_axis * beta * np.cos(inclination)
+
+    return impact_param
+
+
+def get_transit_duration(period: Union[float, np.ndarray],
+                         sm_axis: Union[float, np.ndarray],
+                         planet_radius: Union[float, np.ndarray],
+                         impact_param: Union[float, np.ndarray],
+                         eccentricity: Union[float, np.ndarray],
+                         arg_periastron: Union[float, np.ndarray]
+                         ) -> Union[float, np.ndarray]:
+    """ Compute the full transit duration (T14) for an eccentric orbit, using
+        Equations 7, 14 and 16 from Winn (2010).
+
+    Parameters
+    ----------
+    period: float or np.ndarray
+        The orbital period value(s) in days.
+    sm_axis: float or np.ndarray
+        The semi-major axis value(s) in stellar radii.
+    planet_radius: float or np.ndarray
+        The planet radius value(s) in stellar radii.
+    impact_param: float or np.ndarray
+        The impact parameter value(s).
+    eccentricity: float or np.ndarray
+        The orbital eccentricty value(s).
+    arg_periastron: float or np.ndarray
+        The argument of periastron value(s) in degrees.
+
+    Returns
+    -------
+    transit_duration: float or np.ndarray
+        The transit duration value(s) in days.
+
+    """
+
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    sin_sq = beta ** 2 * ((1 + planet_radius) ** 2 - impact_param ** 2) / (beta ** 2 * sm_axis ** 2 - impact_param ** 2)
+    transit_duration = alpha * period / np.pi * np.arcsin(np.sqrt(sin_sq))
 
     return transit_duration
 
 
-def axis2full(a, per, p, b, ecc, w):
-    """"""
-
-    sin_sq = ((1 - p) ** 2 - b ** 2) / (a ** 2 - b ** 2)
-    transit_full = per / np.pi * np.arcsin(np.sqrt(sin_sq))
-
-    # Eccentricity correction (for transits).
-    transit_full = transit_full * np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD))
-
-    return transit_full
-
-
-def duration2axis(transit_duration, per, p, b, ecc, w):
-    """ Convert the scaled semi-major axis to transit duration.
+def get_sm_axis(period: Union[float, np.ndarray],
+                transit_duration: Union[float, np.ndarray],
+                planet_radius: Union[float, np.ndarray],
+                impact_param: Union[float, np.ndarray],
+                eccentricity: Union[float, np.ndarray],
+                arg_periastron: Union[float, np.ndarray]
+                ) -> Union[float, np.ndarray]:
+    """ Compute the semi-major axis that produces a sppecific duration for an
+        eccentric orbit, using Equations 7, 14 and 16 from Winn (2010).
     """
 
-    # Eccentricity correction (for transits).
-    transit_duration = transit_duration / (np.sqrt(1 - ecc ** 2) / (1 + ecc * np.sin(w * DEG2RAD)))
+    alpha, beta = _ecc_factors(eccentricity, arg_periastron)
+    sin_sq = np.sin(transit_duration / alpha * np.pi / period) ** 2
+    sm_axis_sq = ((1 + planet_radius) ** 2 - impact_param ** 2)/sin_sq + impact_param ** 2 / beta ** 2
+    sm_axis = np.sqrt(sm_axis_sq)
 
-    # Duration in the case of a circular orbit.
-    sin_sq = np.sin(transit_duration/per*np.pi)**2
-    asq = ((1 + p) ** 2 - b ** 2)/sin_sq + b ** 2
-
-    return np.sqrt(asq)
+    return sm_axis
 
 
-def axis2density(a, per):
-    """ Convert the scaled semi-major axis to the stellar density in cgs units.
+def get_stellar_density_kepler(sm_axis: Union[float, np.ndarray],
+                               period: Union[float, np.ndarray]
+                               ) -> Union[float, np.ndarray]:
+    """ Compute the stellar density using Kepler's 3rd law.
+
+    Parameters
+    ----------
+    sm_axis: float or np.ndarray
+        The semi-major axis in units of stellar radii.
+    period: float or np.ndarray
+        The orbital period in days.
+
+    Returns
+    -------
+    stellar_density: float
+        The density of the host star in g/cm^3.
+
     """
 
-    per = per * units.day
+    period_s = period * utils.SEC_IN_DAY  # seconds
 
-    factor = 3 * np.pi / (constants.G * per ** 2)
-    rho = factor * a ** 3
+    factor = 3 * np.pi / (utils.GRAVITY * period_s ** 2)
+    stellar_density = factor * sm_axis ** 3
 
-    rho = rho.to(units.g / units.cm ** 3)
+    stellar_density /= 1e3  # g/cm^3
 
-    return rho.value
+    return stellar_density
 
 
-def density2axis(rho, per):
-    """ Convert the stellar density (in cgs) to the scaled smei-major axis.
+def get_sm_axis_kepler(stellar_density: Union[float, np.ndarray],
+                       period: Union[float, np.ndarray]
+                       ) -> Union[float, np.ndarray]:
+    """ Compute the scaled semi-major axis using Kepler's 3rd law.
+
+    Parameters
+    ----------
+    stellar_density: float
+        The density of the host star in g/cm^3.
+    period: float or np.ndarray
+        The orbital period in days.
+
+    Returns
+    -------
+    sm_axis: float or np.ndarray
+        The semi-major axis in units of stellar radii.
+
     """
 
-    rho = rho * units.g / units.cm ** 3
-    per = per * units.day
+    stellar_density *= 1e3  # kg/m^3
+    period_s = period * utils.SEC_IN_DAY  # seconds
 
-    factor = 3 * np.pi / (constants.G * per ** 2)
-    a = (rho / factor) ** (1 / 3)
-    a = a.decompose()
+    factor = 3 * np.pi / (utils.GRAVITY * period_s ** 2)
+    sm_axis = (stellar_density / factor) ** (1 / 3)
 
-    return a.value
+    return sm_axis
 
 
-def transit_masks(time: np.ndarray,
-                  transit_params: dict,
-                  window: float = 3.
-                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """ Compute various useful masks and number from orbital parameters.
+def get_period_kepler(stellar_density: Union[float, np.ndarray],
+                      sm_axis: Union[float, np.ndarray]
+                      ) -> Union[float, np.ndarray]:
+    """ Compute the orbital period using Kepler's 3rd law.
+
+    Parameters
+    ----------
+    stellar_density: float
+        The density of the host star in g/cm^3.
+    sm_axis: float or np.ndarray
+        The semi-major axis in units of stellar radii.
+
+    Returns
+    -------
+    period: float or np.ndarray
+        The orbital period in days.
+
     """
 
-    # Input parameters.
-    t0 = transit_params['T_0']
-    per = transit_params['P']
-    rp = transit_params['R_p/R_s']
-    a = transit_params['a/R_s']
-    b = transit_params['b']
-    ecc = transit_params['ecc']
-    w = transit_params['w']
+    stellar_density *= 1e3  # kg/m^3
 
-    transit_duration = axis2duration(a, per, rp, b, ecc, w)
+    factor = stellar_density / sm_axis ** 3
+    period_s = np.sqrt(3 * np.pi / (utils.GRAVITY * factor))
 
-    phase = (time - t0) / per
-    norbit = np.round(phase).astype('int')
+    period = period_s / utils.SEC_IN_DAY
 
-    norbit_unique = np.unique(norbit)
-    midpoint = t0 + norbit_unique * per
-
-    phase = np.mod(phase - 0.5, 1) - 0.5
-    intransit = np.abs(phase) <= 0.5 * transit_duration / per
-    baseline = (np.abs(phase) <= 0.5 * window * transit_duration / per) & ~intransit
-
-    min_orbit = np.amin(norbit_unique)
-    norbit = norbit - min_orbit
-    norbit_unique = norbit_unique - min_orbit
-
-    return norbit, intransit, baseline, norbit_unique, midpoint
-
-
-def latlon2xy(lat, lon, lat0, lon0):
-    """ Convert latitude and longitude to x, y coordinates using an orthographic
-        projection.
-    """
-
-    # Convert degrees to radians.
-    lat, lon = lat * DEG2RAD, lon * DEG2RAD
-    lat0, lon0 = lat0 * DEG2RAD, lon0 * DEG2RAD
-
-    xvec = np.cos(lat) * np.sin(lon - lon0)
-    yvec = np.cos(lat0) * np.sin(lat) - np.sin(lat0) * np.cos(lat) * np.cos(lon - lon0)
-    cos_c = np.sin(lat0) * np.sin(lat) + np.cos(lat0) * np.cos(lat) * np.cos(lon - lon0)
-    visible = cos_c >= 0
-
-    return xvec, yvec, visible
-
-
-def xy2latlon(x, y, lat0, lon0):
-    """ Convert x, y coordinates to latitude and longitude using an orthographic
-        projection.
-    """
-
-    lat0, lon0 = lat0 * DEG2RAD, lon0 * DEG2RAD
-
-    rho = np.sqrt(x ** 2 + y ** 2)
-    c = np.arcsin(rho)
-
-    tmp1 = np.cos(c) * np.sin(lat0) + y * np.cos(lat0)
-    lat = np.arcsin(tmp1)
-    tmp2 = rho * np.cos(c) * np.cos(lat0) - y * np.sin(c) * np.sin(lat0)
-    lon = lon0 + np.arctan2(x * np.sin(c), tmp2)
-
-    lat, lon = lat * RAD2DEG, lon * RAD2DEG
-
-    return lat, lon
+    return period
 
 
 def analytic_transit_model(time: np.ndarray,
                            transit_params: dict,
-                           ld_type: str,
+                           ld_type: utils.LDType,
                            ld_pars: ArrayLike,
                            exp_time: Optional[float] = None,
                            supersample_factor: Optional[int] = None,
@@ -222,6 +350,8 @@ def analytic_transit_model(time: np.ndarray,
 
     """
 
+    ld_pars = utils._verify_ld_params(ld_type, ld_pars)
+
     if exp_time is None:
         exp_time = 0.
         supersample_factor = 1
@@ -237,7 +367,7 @@ def analytic_transit_model(time: np.ndarray,
     Omega = transit_params['Omega']
 
     # Derived parameters.
-    inc = impact2inc(b, a, ecc, w)
+    inc = get_orbital_inclination(b, a, ecc, w)
 
     # Create an instance of the batman transit model.
     params = batman.TransitParams()
@@ -262,9 +392,9 @@ def analytic_transit_model(time: np.ndarray,
     if return_orbit:
 
         # Convert angles to radians.
-        inc = inc * DEG2RAD
-        w = w * DEG2RAD
-        Omega = Omega * DEG2RAD
+        inc = np.deg2rad(inc)
+        w = np.deg2rad(w)
+        Omega = np.deg2rad(Omega)
 
         # Compute the planets orbit in the plane of the sky.
         nu = model.get_true_anomaly()
@@ -277,47 +407,421 @@ def analytic_transit_model(time: np.ndarray,
     return flux, nu, xp, yp, params, model.fac
 
 
-def make_test_lightcurve(length: float,
-                         period: float,
-                         depth: float,
-                         duration: float,
-                         noise_ppm: float = 1000.,
-                         ld_type: str = 'linear',
-                         ld_pars: tuple = (0.6,),
-                         exp_time: float = 0.,
-                         supersampling: int = 1):
+def _warped_lstsq_init(mid_times: np.ndarray,
+                       exp_cadence: float,
+                       filter_window: float,
+                       filter_weights: utils.FilterWeights
+                       ) -> tuple[np.ndarray, np.ndarray]:
+    """ Prepare the special time and weights arrays for computing WLS templates.
 
-    # Compute the scaled semi-major axis.
-    axis = duration2axis(duration,
-                         period,
-                         np.sqrt(depth),
-                         0.,
-                         0.,
-                         90.)
+    Parameters
+    ----------
+    mid_times: np.ndarray
+        The times at which to evaluate the transit model.
+    exp_cadence: float
+        The exposure cadence of the observations in days.
+    filter_window: float
+        The filter window to use when generating WLS templates, should match
+        whatever filter was applied to the data.
+    filter_weights: str
+        The weights to apply across the filter window when generating WLS
+        templates, should match whatever filter was applied to the data.
 
-    # A simple transit model.
+    Returns
+    -------
+    wls_times: np.ndarray
+        The times at which to evaluate the transit model in order to generate
+        warped transit shapes.
+    wls_weights: np.ndarray
+        The weights to use when generating warped transit shapes.
+
+    """
+
+    # Create the grid of exposures inside the filter window.
+    nevals = np.ceil(filter_window / exp_cadence).astype('int')
+    if nevals % 2 == 0:
+        nevals += 1
+
+    mid_idx = nevals // 2
+    dt = (np.arange(nevals) - mid_idx) * exp_cadence
+
+    # Compute the weights across the filter window.
+    if filter_weights == 'uniform':
+        weights = np.ones_like(dt)
+
+    if filter_weights == 'tricube':
+        radius = filter_window / 2
+        weights = np.where(np.abs(dt) < radius, (1 - np.abs(dt / radius) ** 3) ** 3, 0)
+
+    # Normalise the weights.
+    weights = weights / np.sum(weights)
+
+    # Get the final arrays of transit times and weights to compute warped transits.
+    wls_times = dt[:, np.newaxis] + mid_times[np.newaxis, :]
+    wls_weights = weights[:, np.newaxis]
+
+    return wls_times, wls_weights
+
+
+def _lstsq_templates(mid_times: np.ndarray,
+                     duration_grid: np.ndarray,
+                     transit_params: dict,
+                     supersample_factor: int,
+                     ld_type: utils.LDType,
+                     ld_pars: ArrayLike,
+                     exp_time: float,
+                     exp_cadence: float,
+                     filter_window: Optional[float],
+                     filter_weights: utils.FilterWeights
+                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """ Compute the transit shapes needed to generate the least-squares templates.
+
+    Parameters
+    ----------
+    mid_times: np.ndarray
+        The times at which to evaluate the transit model.
+    duration_grid: np.ndarray
+        The durations for which to generate transits.
+    transit_params: dict
+        The transit parameters to use for the transit models. The semi-major
+        axis will be adjusted to match each duration.
+    supersample_factor: int
+        Value passed to batman for integrating longer exposures.
+    ld_type: str
+        The limb-darkening law to use for the TLS or WLS templates. Can be any
+        law valid in the batman package.
+    ld_pars: array-like
+        The limb-darkening parameters to use.
+    exp_time: float
+        The exposure time of the observations in days.
+    exp_cadence: float
+        The exposure cadence of the observations in days.
+    filter_window: float or None
+        The filter window to use when generating WLS templates, should match
+        whatever filter was applied to the data.
+    filter_weights: str
+        The weights to apply across the filter window when generating WLS
+        templates, should match whatever filter was applied to the data.
+
+    """
+
+    # Generate the time and weights arrays for WLS.
+    if filter_window is not None:
+        result = _warped_lstsq_init(mid_times, exp_cadence, filter_window, filter_weights)
+        wls_times, wls_weights = result
+
+        # Need 1D time array for batman.
+        wls_times_shape = wls_times.shape
+        wls_times = wls_times.ravel()
+
+    # Create output arrays.
+    nrows = len(duration_grid)
+    ncols = len(mid_times)
+    bls_template = np.zeros((nrows, ncols))
+    tls_template = np.zeros((nrows, ncols))
+    wls_template = np.zeros((nrows, ncols))
+
+    # Iterate over the transit durations.
+    for row_idx, transit_duration in enumerate(duration_grid):
+
+        # Compute the scaled semi-major axis that gives the required duration.
+        sm_axis = get_sm_axis(transit_params['P'],
+                              transit_duration,
+                              transit_params['R_p/R_s'],
+                              transit_params['b'],
+                              transit_params['ecc'],
+                              transit_params['w'])
+        transit_params['a/R_s'] = sm_axis
+
+        # Evaluate the boxy transit model.
+        result = analytic_transit_model(mid_times,
+                                        transit_params,
+                                        'uniform',
+                                        [],
+                                        exp_time=exp_time,
+                                        supersample_factor=supersample_factor,
+                                        max_err=1.)
+        bls_template[row_idx] = result[0]
+
+        # Evaluate the transit shape.
+        result = analytic_transit_model(mid_times,
+                                        transit_params,
+                                        ld_type,
+                                        ld_pars,
+                                        exp_time=exp_time,
+                                        supersample_factor=supersample_factor,
+                                        max_err=1.)
+        fac = result[5]  # Save fac for WLS templates.
+        tls_template[row_idx] = result[0]
+
+        if filter_window is not None:
+            # Evaluate the transit model.
+            result = analytic_transit_model(wls_times,
+                                            transit_params,
+                                            ld_type,
+                                            ld_pars,
+                                            exp_time=exp_time,
+                                            supersample_factor=supersample_factor,
+                                            fac=fac,
+                                            max_err=1.)
+
+            wls_flux = result[0]
+            wls_flux = wls_flux.reshape(wls_times_shape)
+            wls_template[row_idx] = tls_template[row_idx] / np.sum(wls_weights * wls_flux, axis=0)
+
+    return bls_template, tls_template, wls_template
+
+
+def get_lstsq_templates(periods: np.ndarray,
+                        duration_grid: np.ndarray,
+                        epoch_step: float,
+                        exp_time: float,
+                        exp_cadence: float,
+                        ld_type: utils.LDType = 'linear',
+                        ld_pars: ArrayLike = (0.6,),
+                        ref_depth: float = 5000,
+                        ref_impact: float = 0.,
+                        search_mode: utils.SearchMode = 'TLS',
+                        filter_window: Optional[float] = None,
+                        filter_weights: utils.FilterWeights = 'uniform'
+                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """ Get the least-squares transit templates for the chosen search mode.
+
+    Parameters
+    ----------
+    periods: np.ndarray
+        The orbital periods for which we are computing the templates.
+    duration_grid: np.ndarray
+        The durations for which we are computing the templates.
+    epoch_step: float
+        The chosen size of the epoch step.
+    exp_time: float
+        The exposure time of the observations in days.
+    exp_cadence: float
+        The exposure cadence of the observations in days.
+    ld_type: str
+        The limb-darkening law to use for the TLS or WLS templates. Can be any
+        law valid in the batman package (default: 'linear').
+    ld_pars: array-like
+        The limb-darkening parameters to use (default: (0.6,)).
+    ref_depth: float
+        The transit depth (Rp/Rs)^2 to use when making the templates in ppm
+        (default: 5000 ppm).
+    ref_impact: float
+        The impact parameter to use when making the templates (default: 0).
+    search_mode: str
+        The type of transit templates to use, can be 'BLS', 'TLS' or 'WLS'
+        (default: 'TLS').
+    filter_window: float or None
+        The filter window to use when search_mode = 'WLS', should match any
+        whatever filter was applied to the data (default: None).
+    filter_weights: str
+        The weights to apply across the filter window when search_mode = 'WLS',
+        should match whatever filter was applied to the data and can be 'uniform'
+        or 'tricube' (default: 'uniform').
+
+    Returns
+    -------
+    template_edges: np.ndarray
+        The edges of the time bins in which the transit shape was computed.
+    template_model: np.ndarray
+        The scaled transit models for each duration value.
+    template_square: np.ndarray
+        The square of template_models, pre-computed for the transit search.
+    template_count: np.ndarray
+        Has value 1 in transit and 0 outside, used to count in-transit points
+        during the transit search.
+
+    """
+
+    utils._verify_observation_params(exp_time, exp_cadence)
+    ld_pars = utils._verify_ld_params(ld_type, ld_pars)
+    filter_window = utils._verify_lstsq_params(search_mode, filter_window, filter_weights, 'TLS')
+
+    # Convert depth from ppm to fraction.
+    ref_depth = 1e-6 * ref_depth
+
+    # Get extreme values.
+    min_period = np.amin(periods)
+    max_period = np.amax(periods)
+    max_duration = np.amax(duration_grid)
+
+    # Check the baseline.
+    baseline = min_period - max_duration - exp_time
+    if search_mode == 'WLS' and periods.size > 1 and baseline < filter_window:
+        LOGWARNING("Cannot make WLS templates for this period range, defaulting to TLS templates.")
+        search_mode: utils.SearchMode = 'TLS'
+
+    # Compute the duration of the signal, accounting for exp_time and filter_window.
+    if search_mode in ['BLS', 'TLS']:
+        delta_time = max_duration + exp_time
+    else:
+        delta_time = max_duration + exp_time + filter_window
+
+    if periods.size == 1:
+        delta_time = np.minimum(delta_time, max_period)
+
+    # Determine the times at which to evaluate the template.
+    nbins = np.ceil(delta_time / epoch_step).astype('int')
+    template_edges = np.linspace(-delta_time / 2, delta_time / 2, nbins + 1)
+    mid_times = (template_edges[:-1] + template_edges[1:]) / 2
+
+    # Set up the transit parameters.
     transit_params = dict()
-    transit_params['T_0'] = period*RNG.random()
-    transit_params['P'] = period
-    transit_params['R_p/R_s'] = np.sqrt(depth)
-    transit_params['a/R_s'] = axis
-    transit_params['b'] = 0.
+    transit_params['T_0'] = 0.
+    transit_params['P'] = max_period
+    transit_params['R_p/R_s'] = np.sqrt(ref_depth)
+    transit_params['a/R_s'] = 0.
+    transit_params['b'] = ref_impact
     transit_params['ecc'] = 0.
     transit_params['w'] = 90.
     transit_params['Omega'] = 0.
 
-    npoints = np.ceil(length / exp_time).astype('int')
-    time = np.arange(npoints) * exp_time
+    supersample_factor = np.ceil(exp_time * utils.SEC_IN_DAY / 10.).astype('int')
 
-    result = analytic_transit_model(time,
-                                    transit_params,
-                                    ld_type,
-                                    ld_pars,
-                                    max_err=1,
-                                    exp_time=exp_time,
-                                    supersample_factor=supersampling)
+    # Compute the transit templates.
+    result = _lstsq_templates(mid_times,
+                              duration_grid,
+                              transit_params,
+                              supersample_factor,
+                              ld_type,
+                              ld_pars,
+                              exp_time,
+                              exp_cadence,
+                              filter_window,
+                              filter_weights)
+    bls_template, tls_template, wls_template = result
 
-    flux = result[0] + RNG.normal(size=npoints)*noise_ppm/1e6
-    flux_err = np.ones_like(flux)*noise_ppm/1e6
+    # Choose the final template based on the search mode.
+    template_models = None
+    if search_mode == 'BLS':
+        template_models = (bls_template - 1) / ref_depth
+    if search_mode == 'TLS':
+        template_models = (tls_template - 1) / ref_depth
+    if search_mode == 'WLS':
+        template_models = (wls_template - 1) / ref_depth
 
-    return time, flux, flux_err, result[0]
+    template_square = template_models ** 2
+    template_count = (bls_template - 1) < 0
+
+    return template_edges, template_models, template_square, template_count
+
+
+def phase_fold(time: np.ndarray,
+               period: float,
+               midpoint: float
+               ) -> np.ndarray:
+    """ Phase-fold a lightcurve to the domain [-0.5, 0.5) with the transit at
+        phase zero.
+
+    Parameters
+    ----------
+    time: np.ndarray
+        The times at which to evaluate the least-squares template.
+    period: float
+        The orbital period of the transit.
+    midpoint: float
+        The mid-transit time of the transit.
+
+    Returns
+    -------
+    phase: np.ndarray
+        The phase of the observations, with the transit centered at zero.
+
+    """
+
+    phase = np.mod((time - midpoint) / period, 1)
+    phase = np.where(phase < 0.5, phase, phase - 1)
+
+    return phase
+
+
+def evaluate_lstsq_template(time: np.ndarray,
+                            period: float,
+                            midpoint: float,
+                            depth: float,
+                            flux_level: float,
+                            template_edges: np.ndarray,
+                            template_model: np.ndarray
+                            ) -> tuple[np.ndarray, np.ndarray]:
+    """ Evaluate a transit model from a least-squares template.
+
+    Parameters
+    ----------
+    time: np.ndarray
+        The times at which to evaluate the least-squares template.
+    period: float
+        The orbital period of the transit.
+    midpoint: float
+        The mid-transit time of the transit.
+    depth: float
+        The transit depth (Rp/Rs)^2 of the transit.
+    flux_level: float
+        The out-of-transit flux level of the transit.
+    template_edges: np.ndarray
+        The edges of the time bins in which the template was computed.
+    template_model: np.ndarray
+        The template model corresponding to the duration of the transit.
+
+    Returns
+    -------
+    phase: np.ndarray
+        The phase of the observations, with the transit centered at zero.
+    model: np.ndarray
+        The transit model evaluated from the least-squares template.
+
+    """
+
+    phase = phase_fold(time, period, midpoint)
+    bin_idx = np.searchsorted(template_edges / period, phase)
+    template_model = np.concatenate([[0], template_model, [0]])
+    model = depth * template_model[bin_idx] + flux_level
+
+    return phase, model
+
+
+def plot_lstsq_template(period: float,
+                        depth: float,
+                        flux_level: float,
+                        template_edges: np.ndarray,
+                        template_model: np.ndarray
+                        ) -> tuple[np.ndarray, np.ndarray]:
+    """ Evaluate a transit model from a least-squares template, for plotting
+        with matplotlib.pyplot.stairs.
+
+    Parameters
+    ----------
+    period: float
+        The orbital period of the transit.
+    depth: float
+        The transit depth (Rp/Rs)^2 of the transit.
+    flux_level: float
+        The out-of-transit flux level of the transit.
+    template_edges: np.ndarray
+        The edges of the time bins in which the template was computed.
+    template_model: np.ndarray
+        The template model corresponding to the duration of the transit.
+
+    Returns
+    -------
+    phase_edges: np.ndarray
+        The phase of the template edges, with the transit centered at zero.
+        Contains 1 more element than model.
+    model: np.ndarray
+        The transit model evaluated from the least-squares template.
+
+    """
+
+    phase_edges = np.concatenate([[-0.5], template_edges/period, [0.5]])
+    template_model = np.concatenate([[0], template_model, [0]])
+    model = depth * template_model + flux_level
+
+    return phase_edges, model
+
+
+def main():
+    return
+
+
+if __name__ == "__main__":
+    main()
